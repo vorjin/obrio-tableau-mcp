@@ -10,6 +10,13 @@ import { Tool } from '../tool.js';
 
 const paramsSchema = {
   viewId: z.string(),
+  viewFilters: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      'Key-value pairs for Tableau view filters (sent as vf_<key>=<value> query parameters). ' +
+        'Keys must match the exact filter or parameter names defined in the view.',
+    ),
 };
 
 export const getGetViewDataTool = (server: Server): Tool<typeof paramsSchema> => {
@@ -24,10 +31,10 @@ export const getGetViewDataTool = (server: Server): Tool<typeof paramsSchema> =>
       readOnlyHint: true,
       openWorldHint: false,
     },
-    callback: async ({ viewId }, extra): Promise<CallToolResult> => {
+    callback: async ({ viewId, viewFilters }, extra): Promise<CallToolResult> => {
       return await getViewDataTool.logAndExecute<string>({
         extra,
-        args: { viewId },
+        args: { viewId, viewFilters },
         callback: async () => {
           const isViewAllowedResult = await resourceAccessChecker.isViewAllowed({
             viewId,
@@ -46,6 +53,7 @@ export const getGetViewDataTool = (server: Server): Tool<typeof paramsSchema> =>
                 return await restApi.viewsMethods.queryViewData({
                   viewId,
                   siteId: restApi.siteId,
+                  viewFilters,
                 });
               },
             }),

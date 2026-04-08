@@ -46,10 +46,23 @@ export default class ViewsMethods extends AuthenticatedMethods<typeof viewsApis>
   queryViewData = async ({
     viewId,
     siteId,
+    viewFilters,
   }: {
     viewId: string;
     siteId: string;
+    viewFilters?: Record<string, string>;
   }): Promise<string> => {
+    if (viewFilters && Object.keys(viewFilters).length > 0) {
+      const params: Record<string, string> = {};
+      for (const [key, value] of Object.entries(viewFilters)) {
+        params[`vf_${key}`] = value;
+      }
+      const response = await this._apiClient.axios.get(
+        `/sites/${siteId}/views/${viewId}/data`,
+        { params, ...this.authHeader },
+      );
+      return response.data as string;
+    }
     return await this._apiClient.queryViewData({
       params: { siteId, viewId },
       ...this.authHeader,

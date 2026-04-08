@@ -64,6 +64,22 @@ describe('getViewDataTool', () => {
     expect(mocks.mockQueryViewData).toHaveBeenCalledWith({
       siteId: 'test-site-id',
       viewId: '4d18c547-bbb1-4187-ae5a-7f78b35adf2d',
+      viewFilters: undefined,
+    });
+  });
+
+  it('should pass viewFilters to queryViewData', async () => {
+    mocks.mockQueryViewData.mockResolvedValue(mockViewData);
+    const filters = { Region: 'East', Category: 'Technology' };
+    const result = await getToolResult({
+      viewId: '4d18c547-bbb1-4187-ae5a-7f78b35adf2d',
+      viewFilters: filters,
+    });
+    expect(result.isError).toBe(false);
+    expect(mocks.mockQueryViewData).toHaveBeenCalledWith({
+      siteId: 'test-site-id',
+      viewId: '4d18c547-bbb1-4187-ae5a-7f78b35adf2d',
+      viewFilters: filters,
     });
   });
 
@@ -94,7 +110,10 @@ describe('getViewDataTool', () => {
   });
 });
 
-async function getToolResult(params: { viewId: string }): Promise<CallToolResult> {
+async function getToolResult(params: {
+  viewId: string;
+  viewFilters?: Record<string, string>;
+}): Promise<CallToolResult> {
   const getViewDataTool = getGetViewDataTool(new Server());
   const callback = await Provider.from(getViewDataTool.callback);
   return await callback(params, getMockRequestHandlerExtra());
