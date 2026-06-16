@@ -4,6 +4,7 @@ import { LoggingLevel, RequestId } from '@modelcontextprotocol/sdk/types.js';
 import { getBaseConfig } from '../config.shared.js';
 import { ToolName } from '../tools/toolName.js';
 import { getFileLogger } from './fileLogger.js';
+import { log } from './logger.js';
 import { sanitizeForNotification } from './sanitizeNotification.js';
 import { orderedLogLevels } from './types.js';
 
@@ -108,28 +109,41 @@ function getSendNotificationMessageFn(level: LoggingLevel) {
 
     // server.sendNotification doesn't provide a way to provide the relatedRequestId
     // so we're using server.notification directly.
-    return mcpServer.server.notification(
-      {
-        method: 'notifications/message',
-        params: {
-          level,
-          notifier,
-          data: JSON.stringify(
-            {
-              timestamp: new Date().toISOString(),
-              currentNotificationLevel,
-              notifier,
-              message: sanitizedMessage,
-            },
-            null,
-            2,
-          ),
+    try {
+      await mcpServer.server.notification(
+        {
+          method: 'notifications/message',
+          params: {
+            level,
+            notifier,
+            data: JSON.stringify(
+              {
+                timestamp: new Date().toISOString(),
+                currentNotificationLevel,
+                notifier,
+                message: sanitizedMessage,
+              },
+              null,
+              2,
+            ),
+          },
         },
-      },
-      {
-        relatedRequestId: requestId,
-      },
-    );
+        {
+          relatedRequestId: requestId,
+        },
+      );
+    } catch (error) {
+      // The client may have closed this request's SSE stream before the
+      // notification flushed; the transport then throws "No connection
+      // established for request ID". Dropping a log notification is expected,
+      // not fatal, so swallow it rather than surface an unhandled rejection.
+      log({
+        message: 'Failed to send notification',
+        level: 'error',
+        logger: notifier,
+        data: error,
+      });
+    }
   };
 }
 

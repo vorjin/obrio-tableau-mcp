@@ -105,6 +105,23 @@ describe('notification', () => {
   });
 
   describe('log functions', () => {
+    it('should swallow a send failure when the request stream is closed', async () => {
+      const server = new WebMcpServer();
+      setNotificationLevel(server.mcpServer, 'info', { silent: true });
+      vi.mocked(server.mcpServer.server.notification).mockRejectedValueOnce(
+        new Error('No connection established for request ID: 1'),
+      );
+
+      await expect(
+        notifier.info(server.mcpServer, 'test message', {
+          notifier: 'test-logger',
+          requestId: '1',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(server.mcpServer.server.notification).toHaveBeenCalled();
+    });
+
     it('should send logging message when level is appropriate', async () => {
       const server = new WebMcpServer();
       setNotificationLevel(server.mcpServer, 'info', { silent: true });

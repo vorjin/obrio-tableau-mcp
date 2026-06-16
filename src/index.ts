@@ -109,6 +109,18 @@ async function startServer(): Promise<void> {
   }
 }
 
+// Keep a long-running HTTP server alive through stray async failures. A common
+// source is a log notification whose request-scoped SSE stream the client has
+// already closed; such errors are recoverable and must not exit the process.
+process.on('unhandledRejection', (reason) => {
+  log({
+    message: 'Unhandled promise rejection',
+    level: 'error',
+    logger: 'process',
+    data: reason,
+  });
+});
+
 startServer().catch((error) => {
   log({
     message: 'Fatal error when starting the server',
