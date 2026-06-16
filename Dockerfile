@@ -21,6 +21,9 @@ RUN npm ci --omit=dev --production --ignore-scripts
 # Copy built artifacts from builder
 COPY --from=builder /app/build ./build
 
+# Copy runtime feature configuration read from the working directory at startup
+COPY features.json ./
+
 # Ensure executable permission
 RUN chmod +x build/index.js
 
