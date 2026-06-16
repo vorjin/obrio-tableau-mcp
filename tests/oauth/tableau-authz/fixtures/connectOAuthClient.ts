@@ -1,6 +1,7 @@
 import { Browser, expect, Page, WorkerFixture } from '@playwright/test';
 import { z } from 'zod';
 
+import { DEFAULT_MCP_SERVER_URL } from '../constants.js';
 import { ConsentFlow } from '../flows/consentFlow.js';
 import { LoginFlow } from '../flows/loginFlow.js';
 import { GetAuthZCodeFn, getOAuthClient, OAuthClient } from '../oauthClient.js';
@@ -17,7 +18,7 @@ export const getOAuthClientFixture: WorkerFixture<OAuthClient, { browser: Browse
   use,
 ): Promise<void> => {
   const env = getEnv();
-  const client = getOAuthClient();
+  const client = getOAuthClient(env.MCP_SERVER_URL || DEFAULT_MCP_SERVER_URL);
 
   const page = await browser.newPage();
   await connectOAuthClient({ client, page, env });
@@ -26,17 +27,26 @@ export const getOAuthClientFixture: WorkerFixture<OAuthClient, { browser: Browse
 
   await use(client);
 
-  // Teardown: reset consent first (requires a valid token), then revoke via the MCP tool.
-  // Order matters: resetConsent() uses the access token, so it must run before revocation.
-  // resetConsent() is best-effort; revoking the token is asserted so failures are surfaced.
-  await client.resetConsent();
+  // Teardown: reset consent first (requires a valid token), then revoke.
+  // Order matters: reset-consent uses the access token, so it must run before revocation.
+  // Both calls go through the MCP tool path to exercise real tool coverage.
+  // reset-consent is best-effort; revoking the token is asserted so failures are surfaced.
+  try {
+    const resetConsentResult = await client.callTool('reset-consent', {
+      schema: z.string(),
+      toolArgs: {},
+    });
+    expect(resetConsentResult).toContain('consent');
+  } catch {
+    // best-effort: do not prevent revocation if consent reset fails
+  }
 
   try {
     const revokeResult = await client.callTool('revoke-access-token', {
-      schema: z.object({ message: z.string() }),
+      schema: z.string(),
       toolArgs: {},
     });
-    expect(revokeResult.message).toContain('revocation');
+    expect(revokeResult).toContain('revocation');
   } finally {
     await client.close();
   }
@@ -63,6 +73,7 @@ async function connectOAuthClient({
       username: env.TEST_USER,
       password: env.TEST_PASSWORD,
       siteName: env.TEST_SITE_NAME,
+      fillSiteName: env.FILL_SITE_NAME,
     });
 
     await consentFlow.grantConsentIfNecessary();

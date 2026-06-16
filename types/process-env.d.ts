@@ -1,6 +1,14 @@
-export interface ProcessEnvEx {
-  AUTH: string | undefined;
+interface ProcessEnvBase {
   TRANSPORT: string | undefined;
+  DEFAULT_NOTIFICATION_LEVEL: string | undefined;
+  LOG_LEVEL: string | undefined;
+  ENABLED_LOGGERS: string | undefined;
+  FILE_LOGGER_DIRECTORY: string | undefined;
+  MAX_REQUEST_TIMEOUT_MS: string | undefined;
+}
+
+export interface ProcessEnvWeb extends ProcessEnvBase {
+  AUTH: string | undefined;
   SSL_KEY: string | undefined;
   SSL_CERT: string | undefined;
   HTTP_PORT_ENV_VAR_NAME: string | undefined;
@@ -22,26 +30,26 @@ export interface ProcessEnvEx {
   UAT_KEY_ID: string | undefined;
   JWT_ADDITIONAL_PAYLOAD: string | undefined;
   DATASOURCE_CREDENTIALS: string | undefined;
-  DEFAULT_LOG_LEVEL: string | undefined;
+  LOG_LEVEL: string | undefined;
   DISABLE_LOG_MASKING: string | undefined;
   INCLUDE_TOOLS: string | undefined;
   EXCLUDE_TOOLS: string | undefined;
-  MAX_REQUEST_TIMEOUT_MS: string | undefined;
   MAX_RESULT_LIMIT: string | undefined;
   MAX_RESULT_LIMITS: string | undefined;
   DISABLE_QUERY_DATASOURCE_VALIDATION_REQUESTS: string | undefined;
   DISABLE_METADATA_API_REQUESTS: string | undefined;
   DISABLE_SESSION_MANAGEMENT: string | undefined;
-  ENABLED_LOGGERS: string | undefined;
-  FILE_LOGGER_DIRECTORY: string | undefined;
   INCLUDE_PROJECT_IDS: string | undefined;
   INCLUDE_DATASOURCE_IDS: string | undefined;
   INCLUDE_WORKBOOK_IDS: string | undefined;
+  INCLUDE_VIEW_IDS: string | undefined;
   INCLUDE_TAGS: string | undefined;
   TABLEAU_SERVER_VERSION_CHECK_INTERVAL_IN_HOURS: string | undefined;
   PASSTHROUGH_AUTH_USER_SESSION_CHECK_INTERVAL_IN_MINUTES: string | undefined;
   MCP_SITE_SETTINGS_CHECK_INTERVAL_IN_MINUTES: string | undefined;
   ENABLE_MCP_SITE_SETTINGS: string | undefined;
+  ALLOW_SITES_TO_CONFIGURE_REQUEST_OVERRIDES: string | undefined;
+  ALLOWED_REQUEST_OVERRIDES: string | undefined;
   ENABLE_PASSTHROUGH_AUTH: string | undefined;
   DANGEROUSLY_DISABLE_OAUTH: string | undefined;
   OAUTH_EMBEDDED_AUTHZ_SERVER: string | undefined;
@@ -53,6 +61,7 @@ export interface ProcessEnvEx {
   ADVERTISE_API_SCOPES: string | undefined;
   OAUTH_REDIRECT_URI: string | undefined;
   OAUTH_RESOURCE_URI: string | undefined;
+  OAUTH_GLOBAL_RESOURCE_URI: string | undefined;
   OAUTH_LOCK_SITE: string | undefined;
   OAUTH_CLIENT_ID_SECRET_PAIRS: string | undefined;
   OAUTH_DISABLE_SCOPES: string | undefined;
@@ -65,11 +74,21 @@ export interface ProcessEnvEx {
   PRODUCT_TELEMETRY_ENABLED: string | undefined;
   PRODUCT_TELEMETRY_ENDPOINT: string | undefined;
   IS_HYPERFORCE: string | undefined;
+  BREAK_GLASS_DISABLE_GLOBALLY: string | undefined;
+  ADMIN_TOOLS_ENABLED: string | undefined;
+  ADMIN_GATE_CACHE_TTL_MINUTES: string | undefined;
+  STALE_CONTENT_MIN_AGE_DAYS: string | undefined;
+}
+
+export interface ProcessEnvDesktop extends ProcessEnvBase {
+  AGENT_API_BASE: string | undefined;
+  AGENT_API_AUTH_TOKEN: string | undefined;
+  AGENT_API_POLL_INTERVAL_MS: string | undefined;
 }
 
 declare global {
   namespace NodeJS {
-    interface ProcessEnv extends ProcessEnvEx {
+    interface ProcessEnv extends ProcessEnvWeb, ProcessEnvDesktop {
       [key: string]: string | undefined;
     }
   }

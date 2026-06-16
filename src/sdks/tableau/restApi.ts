@@ -1,7 +1,6 @@
 import { fromError } from 'zod-validation-error/v3';
 
 import { getSiteLuidFromAccessToken } from '../../utils/getSiteLuidFromAccessToken.js';
-import { AuthConfig } from './authConfig.js';
 import {
   AxiosInterceptor,
   ErrorInterceptor,
@@ -9,22 +8,27 @@ import {
   getResponseInterceptorConfig,
   RequestInterceptor,
   ResponseInterceptor,
-} from './interceptors.js';
+} from '../interceptors.js';
+import { AuthConfig } from './authConfig.js';
 import {
   AuthenticatedAuthenticationMethods,
   AuthenticationMethods,
 } from './methods/authenticationMethods.js';
 import ContentExplorationMethods from './methods/contentExplorationMethods.js';
 import DatasourcesMethods from './methods/datasourcesMethods.js';
+import JobsMethods from './methods/jobsMethods.js';
+import McpSettingsMethods from './methods/mcpSettingsMethods.js';
 import MetadataMethods from './methods/metadataMethods.js';
+import ProjectsMethods from './methods/projectsMethods.js';
 import PulseMethods from './methods/pulseMethods.js';
 import { AuthenticatedServerMethods, ServerMethods } from './methods/serverMethods.js';
+import TasksMethods from './methods/tasksMethods.js';
+import UsersMethods from './methods/usersMethods.js';
 import ViewsMethods from './methods/viewsMethods.js';
 import VizqlDataServiceMethods from './methods/vizqlDataServiceMethods.js';
 import WorkbooksMethods from './methods/workbooksMethods.js';
 import { BearerToken, bearerTokenSchema } from './types/bearerToken.js';
 import { Credentials } from './types/credentials.js';
-import { McpSiteSettings } from './types/mcpSiteSettings.js';
 
 export type RestApiCredentials =
   | ({ type: 'X-Tableau-Auth' } & Credentials)
@@ -178,6 +182,15 @@ export class RestApi {
     return metadataMethods;
   }
 
+  get projectsMethods(): ProjectsMethods {
+    const projectsMethods = new ProjectsMethods(RestApi.baseUrl, this.creds, {
+      timeout: this._maxRequestTimeoutMs,
+      signal: this._signal,
+    });
+    this._addInterceptors(RestApi.baseUrl, projectsMethods.interceptors);
+    return projectsMethods;
+  }
+
   get pulseMethods(): PulseMethods {
     const pulseMethods = new PulseMethods(RestApi.baseUrlWithoutVersion, this.creds, {
       timeout: this._maxRequestTimeoutMs,
@@ -196,17 +209,40 @@ export class RestApi {
     return serverMethods;
   }
 
-  get siteMethods(): { getMcpSettings: () => Promise<McpSiteSettings> } {
-    return {
-      getMcpSettings: async (): Promise<McpSiteSettings> => {
-        // When the "Get MCP Site Settings" REST API is available:
-        //   1. Remove this comment.
-        //   2. Default enableMcpSiteSettings to enabled.
-        //   3. Add documentation for ENABLE_MCP_SITE_SETTINGS.
-        //   4. Add documentation for MCP_SITE_SETTINGS_CHECK_INTERVAL_IN_MINUTES.
-        return {};
-      },
-    };
+  get mcpSettingsMethods(): McpSettingsMethods {
+    const mcpSettingsMethods = new McpSettingsMethods(RestApi.baseUrl, this.creds, {
+      timeout: this._maxRequestTimeoutMs,
+      signal: this._signal,
+    });
+    this._addInterceptors(RestApi.baseUrl, mcpSettingsMethods.interceptors);
+    return mcpSettingsMethods;
+  }
+
+  get tasksMethods(): TasksMethods {
+    const tasksMethods = new TasksMethods(RestApi.baseUrl, this.creds, {
+      timeout: this._maxRequestTimeoutMs,
+      signal: this._signal,
+    });
+    this._addInterceptors(RestApi.baseUrl, tasksMethods.interceptors);
+    return tasksMethods;
+  }
+
+  get jobsMethods(): JobsMethods {
+    const jobsMethods = new JobsMethods(RestApi.baseUrl, this.creds, {
+      timeout: this._maxRequestTimeoutMs,
+      signal: this._signal,
+    });
+    this._addInterceptors(RestApi.baseUrl, jobsMethods.interceptors);
+    return jobsMethods;
+  }
+
+  get usersMethods(): UsersMethods {
+    const usersMethods = new UsersMethods(RestApi.baseUrl, this.creds, {
+      timeout: this._maxRequestTimeoutMs,
+      signal: this._signal,
+    });
+    this._addInterceptors(RestApi.baseUrl, usersMethods.interceptors);
+    return usersMethods;
   }
 
   get vizqlDataServiceMethods(): VizqlDataServiceMethods {
@@ -237,6 +273,12 @@ export class RestApi {
     this._addInterceptors(RestApi.baseUrl, workbooksMethods.interceptors);
     return workbooksMethods;
   }
+
+  public static versionIsAtLeast = (version: `${number}.${number}`): boolean => {
+    const [currentMajor, currentMinor] = RestApi._version.split('.').map(Number);
+    const [major, minor] = version.split('.').map(Number);
+    return currentMajor > major || (currentMajor === major && currentMinor >= minor);
+  };
 
   signIn = async (authConfig: AuthConfig): Promise<void> => {
     this._creds = {

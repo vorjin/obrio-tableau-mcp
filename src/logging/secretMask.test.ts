@@ -1,14 +1,11 @@
-import {
-  RequestInterceptorConfig,
-  ResponseInterceptorConfig,
-} from '../sdks/tableau/interceptors.js';
-import { Server } from '../server.js';
+import { RequestInterceptorConfig, ResponseInterceptorConfig } from '../sdks/interceptors.js';
+import { WebMcpServer } from '../server.web.js';
 import { setNotificationLevel } from './notification.js';
 import { maskRequest, maskResponse } from './secretMask.js';
 
 describe('secretMask', () => {
   beforeEach(() => {
-    setNotificationLevel(new Server(), 'debug', { silent: true });
+    setNotificationLevel(new WebMcpServer().mcpServer, 'debug', { silent: true });
   });
 
   it('should mask secrets in requests', () => {
@@ -88,6 +85,7 @@ describe('secretMask', () => {
     const maskedResponse = maskResponse({
       status: 200,
       baseUrl: 'https://example.com',
+      params: {},
       url: '/api/v1/users',
       headers: { 'Some-Header': 'hamburgers' },
       data: {
@@ -100,6 +98,7 @@ describe('secretMask', () => {
       status: 200,
       baseUrl: 'https://example.com',
       url: '/api/v1/users',
+      params: {},
       headers: { 'Some-Header': 'hamburgers' },
       data: {
         credentials: '<redacted>',
@@ -109,7 +108,7 @@ describe('secretMask', () => {
   });
 
   it('should not include headers and data in the request if the log level is not debug', () => {
-    setNotificationLevel(new Server(), 'info', { silent: true });
+    setNotificationLevel(new WebMcpServer().mcpServer, 'info', { silent: true });
 
     const maskedRequest = maskRequest({
       method: 'POST',
@@ -132,11 +131,12 @@ describe('secretMask', () => {
   });
 
   it('should not include headers and data in the response if the log level is not debug', () => {
-    setNotificationLevel(new Server(), 'info', { silent: true });
+    setNotificationLevel(new WebMcpServer().mcpServer, 'info', { silent: true });
 
     const maskedResponse = maskResponse({
       status: 200,
       baseUrl: 'https://example.com',
+      params: {},
       url: '/api/v1/users',
       headers: { 'Some-Header': 'hamburgers' },
       data: {
@@ -149,6 +149,7 @@ describe('secretMask', () => {
       status: 200,
       baseUrl: 'https://example.com',
       url: '/api/v1/users',
+      params: {},
     });
   });
 
@@ -172,6 +173,7 @@ describe('secretMask', () => {
     const response: ResponseInterceptorConfig = {
       status: 200,
       baseUrl: 'https://example.com',
+      params: {},
       url: '/api/v1/users',
       headers: { 'Some-Header': 'hamburgers' },
       // Functions can't be cloned by the structured clone algorithm.
@@ -209,7 +211,7 @@ describe('secretMask', () => {
   });
 
   it('should not include params in the request if the log level is not debug', () => {
-    setNotificationLevel(new Server(), 'info', { silent: true });
+    setNotificationLevel(new WebMcpServer().mcpServer, 'info', { silent: true });
 
     const maskedRequest = maskRequest({
       method: 'POST',

@@ -10,7 +10,7 @@ import {
   useRestApi,
 } from './restApiInstance.js';
 import { RestApi } from './sdks/tableau/restApi.js';
-import { Server, userAgent } from './server.js';
+import { WebMcpServer } from './server.web.js';
 
 vi.mock('./logging/notification.js', () => ({
   notifier: {
@@ -44,7 +44,7 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: undefined,
         jwtScopes: [],
         signal: new AbortController().signal,
@@ -71,7 +71,7 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: undefined,
         jwtScopes: [],
         signal: new AbortController().signal,
@@ -104,7 +104,7 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: undefined,
         jwtScopes: [],
         signal: new AbortController().signal,
@@ -135,12 +135,13 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: {
           type: 'Bearer',
           username: 'test-user',
           server: 'https://my-tableau-server.com',
           siteId: 'site-luid',
+          siteName: 'test-site',
           raw: 'abc123|xyz789|site-luid',
         },
         jwtScopes: [],
@@ -162,12 +163,13 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: {
           type: 'X-Tableau-Auth',
           username: 'test-user',
           userId: 'user-luid-123',
           server: 'https://my-tableau-server.com',
+          siteName: 'test-site',
           accessToken: 'abc123|xyz789|site-luid',
           refreshToken: 'refresh-token-123',
         },
@@ -191,13 +193,14 @@ describe('restApiInstance', () => {
       const restApi = await useRestApi({
         config: getConfig(),
         requestId: mockRequestId,
-        server: new Server(),
+        server: new WebMcpServer(),
         tableauAuthInfo: {
           type: 'Passthrough',
           username: 'test-user',
           userId: 'user-luid-123',
           server: 'https://my-tableau-server.com',
           siteId: 'site-luid',
+          siteName: 'test-site',
           raw: 'abc123|xyz789|site-luid',
         },
         jwtScopes: [],
@@ -217,7 +220,7 @@ describe('restApiInstance', () => {
 
   describe('Request Interceptor', () => {
     it('should add User-Agent header and log request', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const interceptor = getRequestInterceptor(server, mockRequestId);
       const mockRequest = {
         headers: {} as Record<string, string>,
@@ -228,9 +231,9 @@ describe('restApiInstance', () => {
 
       interceptor(mockRequest);
 
-      expect(mockRequest.headers['User-Agent']).toBe(userAgent);
+      expect(mockRequest.headers['User-Agent']).toBe(server.userAgent);
       expect(notifier.info).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         expect.objectContaining({
           type: 'request',
           requestId: mockRequestId,
@@ -247,12 +250,13 @@ describe('restApiInstance', () => {
 
   describe('Response Interceptor', () => {
     it('should log response', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const interceptor = getResponseInterceptor(server, mockRequestId);
       const mockResponse = {
         status: 200,
         url: '/api/test',
         baseUrl: mockHost,
+        params: {},
         headers: {},
         data: {},
       };
@@ -261,7 +265,7 @@ describe('restApiInstance', () => {
 
       expect(result).toBe(mockResponse);
       expect(notifier.info).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         expect.objectContaining({
           type: 'response',
           requestId: mockRequestId,
@@ -278,7 +282,7 @@ describe('restApiInstance', () => {
 
   describe('Error Handling', () => {
     it('should handle request errors', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const errorInterceptor = getRequestErrorInterceptor(server, mockRequestId);
       const mockError = {
         request: {
@@ -292,7 +296,7 @@ describe('restApiInstance', () => {
       errorInterceptor(mockError, mockHost);
 
       expect(notifier.error).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         `Request ${mockRequestId} failed with error: ${JSON.stringify(mockError)}`,
         expect.objectContaining({
           notifier: 'rest-api',
@@ -302,7 +306,7 @@ describe('restApiInstance', () => {
     });
 
     it('should handle AxiosError request errors', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const errorInterceptor = getRequestErrorInterceptor(server, mockRequestId);
       const mockError = {
         isAxiosError: true,
@@ -319,7 +323,7 @@ describe('restApiInstance', () => {
       expect(notifier.info).toHaveBeenCalled();
 
       expect(notifier.info).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         expect.objectContaining({
           type: 'request',
           requestId: mockRequestId,
@@ -334,7 +338,7 @@ describe('restApiInstance', () => {
     });
 
     it('should handle response errors', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const errorInterceptor = getResponseErrorInterceptor(server, mockRequestId);
       const mockError = {
         response: {
@@ -349,7 +353,7 @@ describe('restApiInstance', () => {
       errorInterceptor(mockError, mockHost);
 
       expect(notifier.error).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         `Response from request ${mockRequestId} failed with error: ${JSON.stringify(mockError)}`,
         expect.objectContaining({
           notifier: 'rest-api',
@@ -359,7 +363,7 @@ describe('restApiInstance', () => {
     });
 
     it('should handle AxiosError response errors', () => {
-      const server = new Server();
+      const server = new WebMcpServer();
       const errorInterceptor = getResponseErrorInterceptor(server, mockRequestId);
       const mockError = {
         isAxiosError: true,
@@ -376,7 +380,7 @@ describe('restApiInstance', () => {
       errorInterceptor(mockError, mockHost);
 
       expect(notifier.info).toHaveBeenCalledWith(
-        server,
+        server.mcpServer,
         expect.objectContaining({
           type: 'response',
           requestId: mockRequestId,

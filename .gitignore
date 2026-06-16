@@ -3,6 +3,7 @@
 .env.*
 .vscode/
 build/
+cache/
 node_modules/
 junit/
 coverage/
@@ -20,9 +21,13 @@ tableau-mcp.mcpb
 *.tar.gz
 *.zip
 
+# MCP Apps
+src/web/apps/dist/
+
 # Playwright
 /test-results/
 /playwright-report/
 /blob-report/
+/blob-reports/
 /playwright/.cache/
 /playwright/.auth/

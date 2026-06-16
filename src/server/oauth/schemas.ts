@@ -113,6 +113,9 @@ export const tableauBearerTokenSchema = z.object({
   exp: z.number().int().nonnegative(),
   sub: requiredString('sub'),
   scope: requiredString('scope'),
+  // Tableau AS token contract: aud carries the resource server URL (the MCP server's resource
+  // identifier) and client_id carries the OAuth client ID as a distinct, always-present claim.
+  client_id: requiredString('client_id'),
   'https://tableau.com/siteId': requiredString('https://tableau.com/siteId'),
   'https://tableau.com/userId': z.string().optional(), // Unavailable for users without MFA
   'https://tableau.com/targetUrl': requiredString('https://tableau.com/targetUrl'),
@@ -127,6 +130,7 @@ export const tableauAuthInfoSchema = z.discriminatedUnion('type', [
     username: z.string(),
     server: z.string(),
     siteId: z.string().optional(),
+    siteName: z.string(),
     userId: z.string().optional(),
     accessToken: z.string().optional(),
     refreshToken: z.string().optional(),
@@ -136,6 +140,7 @@ export const tableauAuthInfoSchema = z.discriminatedUnion('type', [
     username: z.string(),
     server: z.string(),
     siteId: z.string(),
+    siteName: z.string(),
     userId: z.string().optional(),
     raw: z.string(),
     clientId: z.string().optional(),

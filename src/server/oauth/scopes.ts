@@ -6,7 +6,7 @@
  */
 
 import { getConfig } from '../../config.js';
-import type { ToolName } from '../../tools/toolName.js';
+import type { WebToolName } from '../../tools/web/toolName.js';
 
 /**
  * MCP Scopes supported by the Tableau MCP server
@@ -21,7 +21,12 @@ export type McpScope =
   | 'tableau:mcp:view:read'
   | 'tableau:mcp:view:download'
   | 'tableau:mcp:pulse:read'
-  | 'tableau:mcp:insight:create';
+  | 'tableau:mcp:insight:create'
+  | 'tableau:mcp:tasks:read'
+  | 'tableau:mcp:tasks:delete'
+  | 'tableau:mcp:workbook:delete'
+  | 'tableau:mcp:jobs:read'
+  | 'tableau:mcp:users:read';
 
 export type TableauApiScope =
   | 'tableau:content:read'
@@ -31,7 +36,14 @@ export type TableauApiScope =
   | 'tableau:insight_metrics:read'
   | 'tableau:metric_subscriptions:read'
   | 'tableau:insights:read'
-  | 'tableau:insight_brief:create';
+  | 'tableau:insight_brief:create'
+  | 'tableau:mcp_site_settings:read'
+  | 'tableau:tasks:read'
+  | 'tableau:tasks:delete'
+  | 'tableau:workbook_tags:update'
+  | 'tableau:workbooks:delete'
+  | 'tableau:jobs:read'
+  | 'tableau:users:read';
 
 /**
  * Default scopes supported by the MCP server
@@ -46,34 +58,76 @@ export const DEFAULT_SCOPES_SUPPORTED: ReadonlyArray<McpScope> = [
   'tableau:mcp:view:download',
   'tableau:mcp:pulse:read',
   'tableau:mcp:insight:create',
+  'tableau:mcp:tasks:read',
+  'tableau:mcp:tasks:delete',
+  'tableau:mcp:workbook:delete',
+  'tableau:mcp:jobs:read',
+  'tableau:mcp:users:read',
 ];
 
 export const RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES: ReadonlyArray<TableauApiScope> = [
   'tableau:content:read',
+  'tableau:mcp_site_settings:read',
 ];
 
 /**
  * Validates that a scope string is a valid MCP scope
  */
 export function isValidScope(scope: string): scope is McpScope {
-  return supportedMcpScopes.some((supported) => supported === scope);
+  return getSupportedMcpScopes().some((supported) => supported === scope);
 }
 
 const toolScopeMap: Record<
-  ToolName,
+  WebToolName,
   { mcp: ReadonlyArray<McpScope>; api: ReadonlySet<TableauApiScope> }
 > = {
   'list-datasources': {
     mcp: ['tableau:mcp:datasource:read'],
-    api: new Set(['tableau:content:read']),
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
+  },
+  'list-extract-refresh-tasks': {
+    mcp: ['tableau:mcp:tasks:read'],
+    api: new Set(['tableau:tasks:read', 'tableau:users:read']),
+  },
+  'delete-extract-refresh-task': {
+    mcp: ['tableau:mcp:tasks:delete'],
+    api: new Set(['tableau:tasks:delete', 'tableau:users:read']),
+  },
+  'list-jobs': {
+    mcp: ['tableau:mcp:jobs:read'],
+    api: new Set(['tableau:jobs:read', 'tableau:users:read']),
+  },
+  'list-users': {
+    mcp: ['tableau:mcp:users:read'],
+    api: new Set(['tableau:users:read']),
   },
   'list-workbooks': {
     mcp: ['tableau:mcp:workbook:read'],
-    api: new Set(['tableau:content:read']),
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
+  },
+  // Admin-only destructive tool. Two-phase: preview tags the workbook (workbook_tags:update) and
+  // resolves the owner (users:read); confirm deletes it (workbooks:delete). getWorkbook → content:read.
+  // adminGate.assertAdmin → GET /sites/{siteId}/users/{userId} → users:read.
+  'delete-workbook': {
+    mcp: ['tableau:mcp:workbook:delete'],
+    api: new Set([
+      'tableau:workbooks:delete',
+      'tableau:workbook_tags:update',
+      'tableau:content:read',
+      'tableau:users:read',
+    ]),
+  },
+  'list-projects': {
+    mcp: ['tableau:mcp:content:read'],
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
   },
   'list-views': {
     mcp: ['tableau:mcp:view:read'],
-    api: new Set(['tableau:content:read']),
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
+  },
+  'list-custom-views': {
+    mcp: ['tableau:mcp:view:read'],
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
   },
   'query-datasource': {
     mcp: ['tableau:mcp:datasource:read'],
@@ -87,8 +141,18 @@ const toolScopeMap: Record<
       ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES,
     ]),
   },
+  // Token retrieval: no Tableau REST API calls, no content scope required.
+  // Any authenticated user may retrieve their own token regardless of granted scopes.
+  'get-oauth-token': {
+    mcp: [],
+    api: new Set<TableauApiScope>(),
+  },
   'get-workbook': {
     mcp: ['tableau:mcp:workbook:read'],
+    api: new Set(['tableau:content:read', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
+  },
+  'get-view': {
+    mcp: ['tableau:mcp:view:read'],
     api: new Set(['tableau:content:read', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
   },
   'get-view-data': {
@@ -99,39 +163,51 @@ const toolScopeMap: Record<
     mcp: ['tableau:mcp:view:download'],
     api: new Set(['tableau:views:download', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
   },
+  'get-custom-view-data': {
+    mcp: ['tableau:mcp:view:download'],
+    api: new Set(['tableau:views:download', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
+  },
+  'get-custom-view-image': {
+    mcp: ['tableau:mcp:view:download'],
+    api: new Set(['tableau:views:download', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
+  },
   'list-all-pulse-metric-definitions': {
     mcp: ['tableau:mcp:pulse:read'],
-    api: new Set(['tableau:insight_definitions_metrics:read']),
+    api: new Set(['tableau:insight_definitions_metrics:read', 'tableau:mcp_site_settings:read']),
   },
   'list-pulse-metric-definitions-from-definition-ids': {
     mcp: ['tableau:mcp:pulse:read'],
-    api: new Set(['tableau:insight_definitions_metrics:read']),
+    api: new Set(['tableau:insight_definitions_metrics:read', 'tableau:mcp_site_settings:read']),
   },
   'list-pulse-metrics-from-metric-definition-id': {
     mcp: ['tableau:mcp:pulse:read'],
-    api: new Set(['tableau:insight_definitions_metrics:read']),
+    api: new Set(['tableau:insight_definitions_metrics:read', 'tableau:mcp_site_settings:read']),
   },
   'list-pulse-metrics-from-metric-ids': {
     mcp: ['tableau:mcp:pulse:read'],
-    api: new Set(['tableau:insight_metrics:read']),
+    api: new Set(['tableau:insight_metrics:read', 'tableau:mcp_site_settings:read']),
   },
   'list-pulse-metric-subscriptions': {
     mcp: ['tableau:mcp:pulse:read'],
     // 'tableau:insight_metrics:read' is only required if datasource scoping is enabled.
     // Since we don't have an easy way to determine if datasource scoping is enabled, we include it in all cases.
-    api: new Set(['tableau:metric_subscriptions:read', 'tableau:insight_metrics:read']),
+    api: new Set([
+      'tableau:metric_subscriptions:read',
+      'tableau:insight_metrics:read',
+      'tableau:mcp_site_settings:read',
+    ]),
   },
   'generate-pulse-metric-value-insight-bundle': {
     mcp: ['tableau:mcp:insight:create'],
-    api: new Set(['tableau:insights:read']),
+    api: new Set(['tableau:insights:read', 'tableau:mcp_site_settings:read']),
   },
   'generate-pulse-insight-brief': {
     mcp: ['tableau:mcp:insight:create'],
-    api: new Set(['tableau:insight_brief:create']),
+    api: new Set(['tableau:insight_brief:create', 'tableau:mcp_site_settings:read']),
   },
   'search-content': {
     mcp: ['tableau:mcp:content:read'],
-    api: new Set(['tableau:content:read']),
+    api: new Set(['tableau:content:read', 'tableau:mcp_site_settings:read']),
   },
   // Token lifecycle: no Tableau REST API calls, no content scope required.
   // Any authenticated user may revoke their own token regardless of granted scopes.
@@ -139,25 +215,109 @@ const toolScopeMap: Record<
     mcp: [],
     api: new Set<TableauApiScope>(),
   },
+  // Consent lifecycle: no Tableau REST API calls. Bearer-only (Tableau authZ server).
+  // Any authenticated user may reset their own consent regardless of granted scopes.
+  'reset-consent': {
+    mcp: [],
+    api: new Set<TableauApiScope>(),
+  },
+  // Admin Insights (admin-only). Resolves dataset LUID via list-datasources, then VDS query.
+  // Bypasses resourceAccessChecker — datasources are internal/known and admin-gated.
+  'query-admin-insights-ts-events': {
+    mcp: ['tableau:mcp:datasource:read'],
+    api: new Set([
+      'tableau:viz_data_service:read',
+      'tableau:content:read',
+      'tableau:mcp_site_settings:read',
+      // adminGate.assertAdmin → GET /sites/{siteId}/users/{userId}
+      'tableau:users:read',
+    ]),
+  },
+  'query-admin-insights-site-content': {
+    mcp: ['tableau:mcp:datasource:read'],
+    api: new Set([
+      'tableau:viz_data_service:read',
+      'tableau:content:read',
+      'tableau:mcp_site_settings:read',
+      'tableau:users:read',
+    ]),
+  },
+  'query-admin-insights-job-performance': {
+    mcp: ['tableau:mcp:datasource:read'],
+    api: new Set([
+      'tableau:viz_data_service:read',
+      'tableau:content:read',
+      'tableau:mcp_site_settings:read',
+      'tableau:users:read',
+    ]),
+  },
+  // Server-side anti-join: runs TS Events + Site Content VDS queries internally,
+  // applies threshold, returns final filtered rows. Deterministic — no LLM math.
+  'get-stale-content-report': {
+    mcp: ['tableau:mcp:datasource:read'],
+    api: new Set([
+      'tableau:viz_data_service:read',
+      'tableau:content:read',
+      'tableau:mcp_site_settings:read',
+      'tableau:users:read',
+    ]),
+  },
 };
 
-const supportedMcpScopes = Array.from(
-  new Set(Object.values(toolScopeMap).flatMap((tool) => tool.mcp)),
-);
-const supportedApiScopes = Array.from(
-  new Set(Object.values(toolScopeMap).flatMap((tool) => Array.from(tool.api))),
-);
+function getEnabledToolNames(): Set<WebToolName> {
+  const config = getConfig();
+  const enabledTools = new Set<WebToolName>(Object.keys(toolScopeMap) as WebToolName[]);
+
+  // Remove disabled tools based on feature flags
+  if (!config.adminToolsEnabled) {
+    enabledTools.delete('list-extract-refresh-tasks');
+    enabledTools.delete('delete-extract-refresh-task');
+    enabledTools.delete('delete-workbook');
+    enabledTools.delete('list-jobs');
+    enabledTools.delete('list-users');
+    enabledTools.delete('query-admin-insights-ts-events');
+    enabledTools.delete('query-admin-insights-site-content');
+    enabledTools.delete('query-admin-insights-job-performance');
+    enabledTools.delete('get-stale-content-report');
+  }
+
+  return enabledTools;
+}
 
 export function getSupportedMcpScopes(): McpScope[] {
-  return supportedMcpScopes;
+  const enabledTools = getEnabledToolNames();
+  const scopes = new Set<McpScope>();
+
+  for (const [toolName, scopeConfig] of Object.entries(toolScopeMap)) {
+    if (enabledTools.has(toolName as WebToolName)) {
+      for (const scope of scopeConfig.mcp) {
+        scopes.add(scope);
+      }
+    }
+  }
+
+  return Array.from(scopes);
 }
 
 export function getSupportedApiScopes(): TableauApiScope[] {
-  return supportedApiScopes;
+  const enabledTools = getEnabledToolNames();
+  const scopes = new Set<TableauApiScope>();
+
+  for (const [toolName, scopeConfig] of Object.entries(toolScopeMap)) {
+    if (enabledTools.has(toolName as WebToolName)) {
+      for (const scope of scopeConfig.api) {
+        scopes.add(scope);
+      }
+    }
+  }
+
+  return Array.from(scopes);
 }
 
 export function getSupportedScopes({ includeApiScopes }: { includeApiScopes: boolean }): string[] {
-  return includeApiScopes ? [...supportedMcpScopes, ...supportedApiScopes] : supportedMcpScopes;
+  const mcpScopes = getSupportedMcpScopes();
+  const apiScopes = getSupportedApiScopes();
+  return includeApiScopes ? [...mcpScopes, ...apiScopes] : mcpScopes;
 }
 
 /**
@@ -212,7 +372,7 @@ export function validateScopes(
  * @param endpoint - The MCP endpoint or tool name
  * @returns Array of required scopes for the endpoint
  */
-export function getRequiredScopesForTool(toolName: ToolName): ReadonlyArray<McpScope> {
+export function getRequiredScopesForTool(toolName: WebToolName): ReadonlyArray<McpScope> {
   const oauthConfig = getConfig().oauth;
   if (!oauthConfig || !oauthConfig.enforceScopes) {
     return [];
@@ -221,7 +381,7 @@ export function getRequiredScopesForTool(toolName: ToolName): ReadonlyArray<McpS
   return toolScopeMap[toolName].mcp;
 }
 
-export function getRequiredApiScopesForTool(toolName: ToolName): ReadonlyArray<TableauApiScope> {
+export function getRequiredApiScopesForTool(toolName: WebToolName): ReadonlyArray<TableauApiScope> {
   return Array.from(toolScopeMap[toolName].api);
 }
 

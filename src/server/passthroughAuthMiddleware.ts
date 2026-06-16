@@ -2,9 +2,11 @@ import { NextFunction, RequestHandler, Response } from 'express';
 import { z } from 'zod';
 
 import { getConfig } from '../config';
+import { log } from '../logging/logger';
 import { RestApi } from '../sdks/tableau/restApi';
 import { ExpiringMap } from '../utils/expiringMap';
 import { AuthenticatedRequest } from './oauth/types';
+import { getCookie, getHeader } from './requestUtils';
 
 export const X_TABLEAU_AUTH_HEADER = 'x-tableau-auth';
 const PASSTHROUGH_AUTH_CACHE_MAX_ENTRIES = 1000;
@@ -15,6 +17,7 @@ export const passthroughAuthInfoSchema = z.object({
   userId: z.string(),
   server: z.string(),
   siteId: z.string(),
+  siteName: z.string(), // Always populated from getCurrentServerSession
   raw: z.string(),
 });
 
@@ -58,6 +61,11 @@ export function passthroughAuthMiddleware(): RequestHandler {
       restApi.setCredentials(tableauAccessToken, 'unknown user id');
       const sessionResult = await restApi.authenticatedServerMethods.getCurrentServerSession();
       if (!sessionResult.isOk()) {
+        log({
+          message: `Passthrough auth validation failed: ${sessionResult.error.message}`,
+          level: 'info',
+          logger: 'auth',
+        });
         res.status(401).json({
           error: 'invalid_token',
           error_description: sessionResult.error.message,
@@ -65,12 +73,15 @@ export function passthroughAuthMiddleware(): RequestHandler {
         return;
       }
 
+      const siteName = sessionResult.value.site.contentUrl || '';
+
       passthroughAuthInfo = {
         type: 'Passthrough',
         username: sessionResult.value.user.name,
         userId: sessionResult.value.user.id,
         server,
         siteId: sessionResult.value.site.id,
+        siteName,
         raw: tableauAccessToken,
       };
 
@@ -94,14 +105,4 @@ export function passthroughAuthMiddleware(): RequestHandler {
 
     next();
   };
-}
-
-function getCookie(req: AuthenticatedRequest, cookieName: string): string {
-  const cookieValue = req.cookies?.[cookieName];
-  return cookieValue?.toString() ?? '';
-}
-
-function getHeader(req: AuthenticatedRequest, headerName: string): string {
-  const headerValue = req.headers[headerName];
-  return headerValue?.toString() ?? '';
 }

@@ -1,41 +1,40 @@
-import { describe, it } from 'vitest';
+import { desktopToolNames, isDesktopToolName } from './desktop/toolName.js';
+import { toolNames } from './toolName.js';
+import { isWebToolName, webToolNames } from './web/toolName.js';
 
-import {
-  isToolGroupName,
-  isToolName,
-  ToolGroupName,
-  toolGroupNames,
-  toolGroups,
-  ToolName,
-  toolNames,
-} from './toolName.js';
-
-describe('toolName', () => {
-  it('should validate each tool belongs to a group', () => {
-    const toolNamesToGroups = Object.entries(toolGroups).reduce(
-      (acc, [group, tools]) => {
-        for (const tool of tools) {
-          if (isToolName(tool) && isToolGroupName(group)) {
-            if (acc[tool]) {
-              acc[tool].add(group);
-            } else {
-              acc[tool] = new Set([group]);
-            }
-          }
-        }
-        return acc;
+describe('ToolName', () => {
+  it('should verify all tool names are unique and accounted for', () => {
+    const variants = {
+      desktop: {
+        toolNames: desktopToolNames,
+        isToolName: isDesktopToolName,
       },
-      {} as Record<ToolName, Set<ToolGroupName>>,
-    );
+      web: {
+        toolNames: webToolNames,
+        isToolName: isWebToolName,
+      },
+    };
+
+    for (const [variantA, { toolNames: toolNamesA }] of Object.entries(variants)) {
+      for (const [variantB, { isToolName: isToolNameB }] of Object.entries(variants)) {
+        if (variantA === variantB) {
+          continue;
+        }
+
+        for (const toolName of toolNamesA) {
+          expect(
+            isToolNameB(toolName),
+            `Tool "${toolName}" from the "${variantA}" variant is already a tool in the "${variantB}" variant`,
+          ).toBe(false);
+        }
+      }
+    }
 
     for (const toolName of toolNames) {
-      expect(toolNamesToGroups[toolName], `Tool ${toolName} is not in a group`).toBeDefined();
-    }
-  });
-
-  it('should not allow a tool group to have the same name as a tool', () => {
-    for (const group of toolGroupNames) {
-      expect(isToolName(group), `Group ${group} is the same as a tool name`).toBe(false);
+      expect(
+        [isWebToolName, isDesktopToolName].some((isVariantToolName) => isVariantToolName(toolName)),
+        'This test needs updating. Did you add a new variant?',
+      ).toBe(true);
     }
   });
 });

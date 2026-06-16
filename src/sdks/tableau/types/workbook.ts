@@ -4,6 +4,11 @@ import { projectSchema } from './project.js';
 import { tagsSchema } from './tags.js';
 import { viewSchema } from './view.js';
 
+export const lineageContentSchema = z.object({
+  luid: z.string(),
+  name: z.string(),
+});
+
 export const workbookSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -11,9 +16,15 @@ export const workbookSchema = z.object({
   webpageUrl: z.string().optional(),
   contentUrl: z.string(),
   project: projectSchema.optional(),
+  owner: z
+    .object({
+      id: z.string(),
+    })
+    .optional(),
   showTabs: z.coerce.boolean(),
   defaultViewId: z.string().optional(),
   tags: tagsSchema,
+  upstreamDatasources: z.array(lineageContentSchema).optional(),
   views: z.optional(
     z.object({
       view: z.array(viewSchema),

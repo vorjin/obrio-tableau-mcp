@@ -5,8 +5,10 @@ import { isSSRFSafeURL } from 'ssrfcheck';
 import { Err, Ok, Result } from 'ts-results-es';
 import { fromError } from 'zod-validation-error/v3';
 
-import { getConfig, ONE_DAY_IN_MS } from '../../config.js';
+import { getConfig } from '../../config.js';
+import { log } from '../../logging/logger.js';
 import { axios, AxiosResponse, getStringResponseHeader, isAxiosError } from '../../utils/axios.js';
+import { milliseconds } from '../../utils/milliseconds.js';
 import { parseUrl } from '../../utils/parseUrl.js';
 import { retry } from '../../utils/retry.js';
 import { setLongTimeout } from '../../utils/setLongTimeout.js';
@@ -14,6 +16,7 @@ import { clientMetadataCache } from './clientMetadataCache.js';
 import { getDnsResolver } from './dnsResolver.js';
 import { generateCodeChallenge } from './generateCodeChallenge.js';
 import { isValidRedirectUri } from './isValidRedirectUri.js';
+import { matchesRegisteredRedirectUri } from './matchesRegisteredRedirectUri.js';
 import { TABLEAU_CLOUD_SERVER_URL } from './provider.js';
 import { cimdMetadataSchema, ClientMetadata, mcpAuthorizeSchema } from './schemas.js';
 import { getSupportedScopes, parseScopes, validateScopes } from './scopes.js';
@@ -74,7 +77,10 @@ export function authorize(
         return;
       }
 
-      if (redirect_uris && !redirect_uris.includes(redirect_uri)) {
+      if (
+        redirect_uris &&
+        !redirect_uris.some((uri) => matchesRegisteredRedirectUri(redirect_uri, uri))
+      ) {
         res.status(400).json({
           error: 'invalid_request',
           error_description: `Invalid redirect URI: ${redirect_uri}`,
@@ -203,7 +209,13 @@ async function getOAuthRedirectUrl(
         return locationUrl;
       }
     }
-  } catch {
+  } catch (error) {
+    log({
+      message: 'Failed to follow Tableau OAuth redirect for site picker',
+      level: 'error',
+      logger: 'oauth',
+      data: error,
+    });
     return initialOAuthUrl;
   }
 
@@ -239,7 +251,13 @@ async function getClientFromMetadataDoc(
       }
       // Replace the hostname with the resolved IP Address
       clientMetadataUrl.hostname = ipAddress;
-    } catch {
+    } catch (error) {
+      log({
+        message: `DNS resolution failed for client metadata URL ${clientMetadataUrl.hostname}`,
+        level: 'info',
+        logger: 'oauth',
+        data: error,
+      });
       return Err({
         error: 'invalid_request',
         error_description: 'IP address of Client Metadata URL could not be resolved',
@@ -288,7 +306,13 @@ async function getClientFromMetadataDoc(
         },
       },
     );
-  } catch {
+  } catch (error) {
+    log({
+      message: `Failed to fetch client metadata from ${originalUrl}`,
+      level: 'error',
+      logger: 'oauth',
+      data: error,
+    });
     return Err({
       error: 'invalid_request',
       error_description: 'Unable to fetch client metadata',
@@ -343,7 +367,10 @@ async function getClientFromMetadataDoc(
   if (cacheControlMaxAge) {
     const cacheControlMaxAgeSeconds = parseInt(cacheControlMaxAge);
     if (!isNaN(cacheControlMaxAgeSeconds) && cacheControlMaxAgeSeconds >= 0) {
-      cacheExpiryMs = Math.min(ONE_DAY_IN_MS, cacheControlMaxAgeSeconds * 1000);
+      cacheExpiryMs = Math.min(
+        milliseconds.fromDays(1),
+        milliseconds.fromSeconds(cacheControlMaxAgeSeconds),
+      );
     }
   }
 

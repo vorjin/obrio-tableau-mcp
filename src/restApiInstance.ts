@@ -1,6 +1,7 @@
 import { RequestId } from '@modelcontextprotocol/sdk/types.js';
 
 import { Config, getConfig } from './config.js';
+import { log } from './logging/logger.js';
 import { notifier, shouldNotifyWhenLevelIsAtLeast } from './logging/notification.js';
 import { maskRequest, maskResponse } from './logging/secretMask.js';
 import {
@@ -12,11 +13,11 @@ import {
   RequestInterceptorConfig,
   ResponseInterceptor,
   ResponseInterceptorConfig,
-} from './sdks/tableau/interceptors.js';
+} from './sdks/interceptors.js';
 import { RestApi } from './sdks/tableau/restApi.js';
-import { Server, userAgent } from './server.js';
+import { Server } from './server.js';
 import { TableauAuthInfo } from './server/oauth/schemas.js';
-import { TableauRequestHandlerExtra } from './tools/toolContext.js';
+import { TableauWebRequestHandlerExtra } from './tools/web/toolContext.js';
 import { isAxiosError } from './utils/axios.js';
 import { getExceptionMessage } from './utils/getExceptionMessage.js';
 import invariant from './utils/invariant.js';
@@ -30,10 +31,16 @@ type JwtScopes =
   | 'tableau:insights:read'
   | 'tableau:views:download'
   | 'tableau:insight_brief:create'
-  | 'tableau:mcp_site_settings:read';
+  | 'tableau:mcp_site_settings:read'
+  | 'tableau:tasks:read'
+  | 'tableau:tasks:delete'
+  | 'tableau:workbook_tags:update'
+  | 'tableau:workbooks:delete'
+  | 'tableau:jobs:read'
+  | 'tableau:users:read';
 
 export type RestApiArgs = Pick<
-  TableauRequestHandlerExtra,
+  TableauWebRequestHandlerExtra,
   'config' | 'server' | 'signal' | 'tableauAuthInfo' | 'setSiteLuid' | 'setUserLuid'
 > &
   (
@@ -68,7 +75,7 @@ const getNewRestApiInstanceAsync = async (
       'abort',
       () => {
         notifier.info(
-          server,
+          server.mcpServer,
           {
             type: 'request-cancelled',
             requestId,
@@ -187,6 +194,7 @@ export const useRestApi = async <T>(
       // Sessions for 'oauth' and 'passthrough' are not. Signing out would invalidate the session,
       // preventing the access token from being reused for subsequent requests.
       await restApi.signOut();
+      log({ message: 'Signed out of Tableau REST API', level: 'debug', logger: 'auth' });
     }
   }
 };
@@ -194,7 +202,7 @@ export const useRestApi = async <T>(
 export const getRequestInterceptor =
   (server: Server, requestId: RequestId): RequestInterceptor =>
   (request) => {
-    request.headers['User-Agent'] = getUserAgent(server);
+    request.headers['User-Agent'] = server.userAgent;
     logRequest(server, request, requestId);
     return request;
   };
@@ -203,8 +211,14 @@ export const getRequestErrorInterceptor =
   (server: Server, requestId: RequestId): ErrorInterceptor =>
   (error, baseUrl) => {
     if (!isAxiosError(error) || !error.request) {
+      log({
+        message: `Request ${requestId} failed`,
+        level: 'error',
+        logger: 'rest-api',
+        data: error,
+      });
       notifier.error(
-        server,
+        server.mcpServer,
         `Request ${requestId} failed with error: ${getExceptionMessage(error)}`,
         {
           notifier: 'rest-api',
@@ -236,8 +250,14 @@ export const getResponseErrorInterceptor =
   (server: Server, requestId: RequestId): ErrorInterceptor =>
   (error, baseUrl) => {
     if (!isAxiosError(error) || !error.response) {
+      log({
+        message: `Response from request ${requestId} failed`,
+        level: 'error',
+        logger: 'rest-api',
+        data: error,
+      });
       notifier.error(
-        server,
+        server.mcpServer,
         `Response from request ${requestId} failed with error: ${getExceptionMessage(error)}`,
         { notifier: 'rest-api', requestId },
       );
@@ -278,7 +298,7 @@ function logRequest(server: Server, request: RequestInterceptorConfig, requestId
     }),
   } as const;
 
-  notifier.info(server, messageObj, { notifier: 'rest-api', requestId });
+  notifier.info(server.mcpServer, messageObj, { notifier: 'rest-api', requestId });
 }
 
 function logResponse(
@@ -291,8 +311,8 @@ function logResponse(
   const url = new URL(
     `${maskedResponse.baseUrl.replace(/\/$/, '')}/${maskedResponse.url?.replace(/^\//, '') ?? ''}`,
   );
-  if (response.request?.params && Object.keys(response.request.params).length > 0) {
-    url.search = new URLSearchParams(response.request.params).toString();
+  if (response.params && Object.keys(response.params).length > 0) {
+    url.search = new URLSearchParams(response.params).toString();
   }
   const messageObj = {
     type: 'response',
@@ -305,18 +325,7 @@ function logResponse(
     }),
   } as const;
 
-  notifier.info(server, messageObj, { notifier: 'rest-api', requestId });
-}
-
-function getUserAgent(server: Server): string {
-  const userAgentParts = [userAgent];
-  if (server.clientInfo) {
-    const { name, version } = server.clientInfo;
-    if (name) {
-      userAgentParts.push(version ? `(${name} ${version})` : `(${name})`);
-    }
-  }
-  return userAgentParts.join(' ');
+  notifier.info(server.mcpServer, messageObj, { notifier: 'rest-api', requestId });
 }
 
 function getJwtUsername(config: Config, authInfo: TableauAuthInfo | undefined): string {
