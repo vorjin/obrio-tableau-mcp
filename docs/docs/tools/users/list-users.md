@@ -6,8 +6,8 @@ sidebar_position: 1
 
 Retrieves a list of users on the Tableau site. Each user includes profile information such as site role, email, last login time, and authentication settings.
 
-:::warning Admin Only
-This tool is restricted to Tableau site administrators and requires the `ADMIN_TOOLS_ENABLED` feature flag to be enabled.
+:::warning[Admin Only]
+This tool is restricted to Tableau site administrators and requires the `ADMIN_TOOLS_ENABLED` environment variable to be enabled.
 :::
 
 ## APIs called
@@ -34,7 +34,7 @@ Use this tool when you need to:
 
 ## Configuration
 
-Enable this tool by setting the feature flag:
+Enable this tool by setting:
 
 ```bash
 ADMIN_TOOLS_ENABLED=true
@@ -50,7 +50,7 @@ See also: [Environment Variables](../../configuration/mcp-config/env-vars.md)
 | `pageSize` | number | No | Number of results per page (client-side pagination after filtering) |
 | `limit` | number | No | Maximum total results to return (client-side limit after filtering) |
 
-:::note API Limitation
+:::note[API Limitation]
 The Tableau REST API does not support server-side filtering or pagination for users. All users are fetched and filtering is performed client-side by this tool.
 :::
 

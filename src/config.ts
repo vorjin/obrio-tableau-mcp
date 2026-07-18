@@ -2,6 +2,11 @@ import { CorsOptions } from 'cors';
 import { existsSync, readFileSync } from 'fs';
 
 import { BaseConfig, removeClaudeMcpBundleUserConfigTemplates } from './config.shared.js';
+import {
+  FeatureGateConfig,
+  isFeatureGateProvider,
+  providerConfigSchema as featureGateProviderConfigSchema,
+} from './features/types.js';
 import { isTelemetryProvider, providerConfigSchema, TelemetryConfig } from './telemetry/types.js';
 import { isTransport } from './transports.js';
 import invariant from './utils/invariant.js';
@@ -49,7 +54,7 @@ export class Config extends BaseConfig {
     issuer: string;
     redirectUri: string;
     resourceUri: string;
-    globalResourceUri: string;
+    globalResourceUris: string[];
     lockSite: boolean;
     jwePrivateKey: string;
     jwePrivateKeyPath: string;
@@ -67,8 +72,12 @@ export class Config extends BaseConfig {
   productTelemetryEndpoint: string;
   productTelemetryEnabled: boolean;
   isHyperforce: boolean;
+  featureGate: FeatureGateConfig;
   breakGlassDisableGlobally: boolean;
   adminToolsEnabled: boolean;
+  flowToolsEnabled: boolean;
+  insightsToolsEnabled: boolean;
+  cspAllowedDomains: string[];
 
   constructor() {
     super();
@@ -114,7 +123,7 @@ export class Config extends BaseConfig {
       OAUTH_JWE_PRIVATE_KEY_PATH: oauthJwePrivateKeyPath,
       OAUTH_JWE_PRIVATE_KEY_PASSPHRASE: oauthJwePrivateKeyPassphrase,
       OAUTH_RESOURCE_URI: oauthResourceUri,
-      OAUTH_GLOBAL_RESOURCE_URI: oauthGlobalResourceUri,
+      OAUTH_GLOBAL_RESOURCE_URIS: oauthGlobalResourceUris,
       OAUTH_REDIRECT_URI: redirectUri,
       OAUTH_CLIENT_ID_SECRET_PAIRS: oauthClientIdSecretPairs,
       OAUTH_CIMD_DNS_SERVERS: dnsServers,
@@ -125,12 +134,17 @@ export class Config extends BaseConfig {
       OAUTH_DISABLE_SCOPES: oauthDisableScopes,
       TELEMETRY_PROVIDER: telemetryProvider,
       TELEMETRY_PROVIDER_CONFIG: telemetryProviderConfig,
+      FEATURE_GATE_PROVIDER: featureGateProvider,
+      FEATURE_GATE_PROVIDER_CONFIG: featureGateProviderConfig,
       LATENCY_METRIC_NAME: latencyMetricName,
       PRODUCT_TELEMETRY_ENDPOINT: productTelemetryEndpoint,
       PRODUCT_TELEMETRY_ENABLED: productTelemetryEnabled,
       IS_HYPERFORCE: isHyperforce,
       BREAK_GLASS_DISABLE_GLOBALLY: breakGlassDisableGlobally,
       ADMIN_TOOLS_ENABLED: adminToolsEnabled,
+      FLOW_TOOLS_ENABLED: flowToolsEnabled,
+      INSIGHTS_TOOLS_ENABLED: insightsToolsEnabled,
+      CSP_ALLOWED_DOMAINS: cspAllowedDomains,
     } = cleansedVars;
 
     let jwtUsername = '';
@@ -194,7 +208,12 @@ export class Config extends BaseConfig {
       embeddedAuthzServer,
       issuer: oauthIssuer ?? '',
       resourceUri: oauthResourceUri ?? `http://127.0.0.1:${this.httpPort}`,
-      globalResourceUri: oauthGlobalResourceUri ?? '',
+      globalResourceUris: oauthGlobalResourceUris
+        ? oauthGlobalResourceUris
+            .split(',')
+            .map((uri) => uri.trim())
+            .filter(Boolean)
+        : [],
       redirectUri: redirectUri || (oauthIssuer ? `${oauthIssuer}/Callback` : ''),
       lockSite: oauthLockSite !== 'false', // Site locking is enabled by default
       jwePrivateKey: oauthJwePrivateKey ?? '',
@@ -262,8 +281,35 @@ export class Config extends BaseConfig {
       productTelemetryEndpoint || 'https://prod.telemetry.tableausoftware.com';
     this.productTelemetryEnabled = productTelemetryEnabled !== 'false';
     this.isHyperforce = isHyperforce === 'true';
+
+    // Feature gate provider configuration (similar to telemetry provider)
+    if (isFeatureGateProvider(featureGateProvider) && featureGateProvider === 'custom') {
+      if (!featureGateProviderConfig) {
+        throw new Error(
+          'FEATURE_GATE_PROVIDER_CONFIG is required when FEATURE_GATE_PROVIDER is "custom"',
+        );
+      }
+      this.featureGate = {
+        provider: 'custom',
+        providerConfig: featureGateProviderConfigSchema.parse(
+          JSON.parse(featureGateProviderConfig),
+        ),
+      };
+    } else {
+      this.featureGate = {
+        provider: 'server',
+      };
+    }
+
     this.breakGlassDisableGlobally = breakGlassDisableGlobally === 'true';
     this.adminToolsEnabled = adminToolsEnabled === 'true';
+    // Flow tools are gated off by default while flow rollouts are staged into
+    // production; set FLOW_TOOLS_ENABLED=true to register them.
+    this.flowToolsEnabled = flowToolsEnabled === 'true';
+    // Insight-cards tools (generate-insight-cards, resolve-datasource-luid) are
+    // gated off by default while the insights rollout is staged (keeps hosts
+    // like Slackbot stable); set INSIGHTS_TOOLS_ENABLED=true to register them.
+    this.insightsToolsEnabled = insightsToolsEnabled === 'true';
 
     this.auth = isAuthType(auth) ? auth : this.oauth.enabled ? 'oauth' : 'pat';
     this.transport = isTransport(transport) ? transport : this.oauth.enabled ? 'http' : 'stdio';
@@ -363,6 +409,19 @@ export class Config extends BaseConfig {
     }
 
     this.server = server ?? '';
+
+    // Configure CSP domains with serverOrigin in defaults
+    const serverOrigin = this.server ? new URL(this.server).origin : '';
+    const defaultDomains = [
+      'https://*.online.tableau.com',
+      'https://*.tableau.com',
+      ...(serverOrigin ? [serverOrigin] : []),
+    ];
+    const customDomains = cspAllowedDomains
+      ? cspAllowedDomains.split(',').map((d) => d.trim())
+      : [];
+    this.cspAllowedDomains = [...defaultDomains, ...customDomains];
+
     this.patName = patName ?? '';
     this.patValue = patValue ?? '';
     this.jwtUsername = jwtUsername ?? '';
@@ -387,7 +446,7 @@ function validateServer(server: string): void {
   }
 
   try {
-    const _ = new URL(server);
+    new URL(server);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(

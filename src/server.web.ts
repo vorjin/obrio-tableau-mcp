@@ -5,14 +5,18 @@ import {
 } from '@modelcontextprotocol/ext-apps/server';
 import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import {
+  ReadResourceResult,
+  ServerNotification,
+  ServerRequest,
+} from '@modelcontextprotocol/sdk/types.js';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 
 import pkg from '../package.json';
 import { getConfig } from './config.js';
 import { ServiceUnavailableError } from './errors/mcpToolError.js';
-import { getFeatureGate } from './features/featureGate.js';
+import { getFeatureGate } from './features/init.js';
 import { getTableauServerInfo } from './getTableauServerInfo.js';
 import { registerPrompts } from './prompts/index.js';
 import { ClientInfo, Server } from './server.js';
@@ -40,7 +44,7 @@ export class WebMcpServer extends Server {
   registerTools = async (tableauAuthInfo?: TableauAuthInfo): Promise<void> => {
     const config = getConfig();
 
-    const mcpAppsEnabled = getFeatureGate().isFeatureEnabled('mcp-apps');
+    const mcpAppsEnabled = await getFeatureGate().isFeatureEnabled('mcp-apps');
 
     for (const tool of await this._getToolsToRegister(tableauAuthInfo)) {
       const toolCallback: ToolCallback<typeof tool.paramsSchema> = async (
@@ -123,8 +127,8 @@ export class WebMcpServer extends Server {
 
     const { includeTools, excludeTools } = configOverrides;
 
-    const allTools = webToolFactories.map((toolFactory) =>
-      toolFactory(this, tableauServerInfo.productVersion),
+    const allTools = await Promise.all(
+      webToolFactories.map((toolFactory) => toolFactory(this, tableauServerInfo.productVersion)),
     );
     const toolsToRegister: typeof allTools = [];
     for (const tool of allTools) {
@@ -183,20 +187,37 @@ export class WebMcpServer extends Server {
     );
 
     // Register the resource, which returns the bundled HTML/JavaScript for the UI.
+    const config = getConfig();
+
+    // Allow configured CSP domains
+    const cspDomains = config.cspAllowedDomains;
+
     registerAppResource(
       // @ts-expect-error -- harmless type mismatch in registerAppResource; ext-apps uses MCP SDK v1.25.2. Should go away when MCP SDK is updated.
       this.mcpServer,
       tool.name,
       resourceUri,
-      { mimeType: RESOURCE_MIME_TYPE },
-      async () => {
+      {
+        mimeType: RESOURCE_MIME_TYPE,
+      },
+      async (): Promise<ReadResourceResult> => {
         const htmlContent = await readFile(join(__dirname, htmlPath), 'utf-8');
+
         return {
           contents: [
             {
               uri: resourceUri,
               mimeType: RESOURCE_MIME_TYPE,
               text: htmlContent,
+              _meta: {
+                ui: {
+                  csp: {
+                    connectDomains: cspDomains,
+                    resourceDomains: cspDomains,
+                    frameDomains: cspDomains,
+                  },
+                },
+              },
             },
           ],
         };

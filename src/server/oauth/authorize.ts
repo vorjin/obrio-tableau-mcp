@@ -117,7 +117,7 @@ export function authorize(
     const requestedScopes = parseScopes(scope);
     const { valid: validScopes, invalid: invalidScopes } = validateScopes(
       requestedScopes,
-      getSupportedScopes({ includeApiScopes: advertiseApiScopes }),
+      await getSupportedScopes({ includeApiScopes: advertiseApiScopes }),
     );
 
     if (invalidScopes.length > 0) {
@@ -132,7 +132,7 @@ export function authorize(
       validScopes.length > 0
         ? validScopes
         : enforceScopes
-          ? getSupportedScopes({ includeApiScopes: advertiseApiScopes })
+          ? await getSupportedScopes({ includeApiScopes: advertiseApiScopes })
           : [];
 
     // Generate Tableau state and store pending authorization
@@ -254,7 +254,7 @@ async function getClientFromMetadataDoc(
     } catch (error) {
       log({
         message: `DNS resolution failed for client metadata URL ${clientMetadataUrl.hostname}`,
-        level: 'info',
+        level: 'error',
         logger: 'oauth',
         data: error,
       });

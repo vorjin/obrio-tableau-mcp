@@ -50,7 +50,7 @@ Not every API endpoint makes a good MCP tool. Ask these questions first:
 
 | Question                                                                                                    | Why It Matters                                                                                                                                                                          |
 | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Does a user or agent have a reason to invoke this in a conversational flow or as part of an automation?** | Tools should solve real problems among all of our user personas (Business User, Analayst, Admin, and Data Steward). An API that only matters during system setup may not be a good fit. |
+| **Does a user or agent have a reason to invoke this in a conversational flow or as part of an automation?** | Tools should solve real problems among all of our user personas (Business User, Analyst, Admin, and Data Steward). An API that only matters during system setup may not be a good fit. |
 | **Is the API available on Tableau Cloud and/or Server REST API?**                                           | The MCP server authenticates through Tableau's REST API session. Your API must be callable with a REST API session token (`X-Tableau-Auth`).                                            |
 | **Is the response bounded and predictable?**                                                                | A tool that returns 50,000 rows is difficult for an Agent to deal with. Good tools have pagination, filtering, or natural result limits.                                                |
 
@@ -485,5 +485,5 @@ AI's context window is finite, so every token counts.
 
 - **Slack:** `#tab-dev-mcp-project` (internal Tableau employees only) or `#tableau-ai-solutions`
   (public channel for the community)
-- **Codebase reference:** Look at `src/tools/web/listDatasources/` for a straightforward read-only
+- **Codebase reference:** Look at `src/tools/web/datasources/` for a straightforward read-only
   tool, or `src/tools/web/pulse/` for a group of related tools

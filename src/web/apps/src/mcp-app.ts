@@ -1,16 +1,16 @@
-/**
- * @file Simple Tableau MCP App UI
- */
 import './mcp-app.css';
 
 import { App } from '@modelcontextprotocol/ext-apps';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import pkg from '~/package.json';
 
-// Create app instance
-const app = new App({ name: 'Tableau MCP App', version: pkg.version });
+import { handleToolResult } from './lib/handleToolResult.js';
 
-// Connect to host
-app.connect().then(() => {
-  console.info('Tableau MCP App connected!');
-});
+const app = new App({ name: 'Tableau MCP App', version: pkg.version });
+app.ontoolresult = (result: CallToolResult) => {
+  void handleToolResult(app, result).catch((err) => {
+    console.error('[mcp-app] Unhandled error in handleToolResult:', err);
+  });
+};
+app.connect();

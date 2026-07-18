@@ -12,7 +12,6 @@ The URL of the Tableau server.
 
 - For Tableau Cloud, specify your site's specific pod e.g.
   `https://prod-useast-c.online.tableau.com`
-- Required unless [`AUTH`](#auth) is `oauth`.
 
 <hr />
 
@@ -64,7 +63,6 @@ A comma-separated list of loggers to enable.
   `2025-10-15T22-00-00-000Z.log` meaning this log file contains all log messages for hour 22 of
   2025-10-15 in UTC time. All log entries for a given hour of the day are appended to the same file.
 - Each line in the log file is a JSON object with a timestamp and additional properties:
-
   - `timestamp`: The timestamp of the log message in UTC time.
   - `level`: The logging level of the log message.
   - `logger`: The logger of the log message. This is typically `rest-api` for HTTP traces or
@@ -273,6 +271,7 @@ This means that:
   [`MAX_RESULT_LIMIT`](#max_result_limit) variable will be used instead.
 - Each limit must be a positive number, or `*` to indicate unbounded results.
 
+
 <hr />
 
 ## `DISABLE_QUERY_DATASOURCE_VALIDATION_REQUESTS`
@@ -374,13 +373,49 @@ TELEMETRY_PROVIDER_CONFIG='{"module": "./my-telemetry-provider.js"}'
 ```
 
 The custom provider module should export a default class (or named export `TelemetryProvider`) that
-implements:
+implements the [`TelemetryProvider`](https://github.com/tableau/tableau-mcp/blob/main/src/telemetry/types.ts) interface.
 
-```typescript
-interface TelemetryProvider {
-  initialize(): void;
-  recordMetric(name: string, value: number, attributes: Record<string, unknown>): void;
-}
+<hr />
+
+## `FEATURE_GATE_PROVIDER`
+
+The feature gate provider to use for feature flag management.
+
+- Default: `server`
+- Possible values:
+  - `server` - File-based feature gate using `features.json` (default, for on-premise Tableau Server)
+  - `custom` - Load a custom feature gate provider from a user-specified module
+
+:::tip Custom Provider
+
+To use a custom feature gate provider, set `FEATURE_GATE_PROVIDER=custom` and provide the module path via `FEATURE_GATE_PROVIDER_CONFIG`:
+
+```bash
+FEATURE_GATE_PROVIDER=custom
+FEATURE_GATE_PROVIDER_CONFIG='{"module":"./my-feature-gate.js"}'
+```
+
+The custom provider module should export a default class or named export `FeatureGateProvider` that implements the `FeatureGateProvider` interface.
+
+:::
+
+<hr />
+
+## `FEATURE_GATE_PROVIDER_CONFIG`
+
+Configuration for custom feature gate providers (JSON string).
+
+- Required when: `FEATURE_GATE_PROVIDER` is `custom`
+- Format: `{"module": "<path-to-module>", ...additional-config}`
+
+The `module` field can be:
+- A relative file path (e.g., `./my-provider.js`) - resolved from process working directory
+- An absolute file path (e.g., `/path/to/provider.js`)
+- An npm package name (e.g., `@company/feature-gate-provider`)
+
+**Example:**
+```bash
+FEATURE_GATE_PROVIDER_CONFIG='{"module":"./providers/cloud-feature-gate.js"}'
 ```
 
 <hr />
@@ -420,6 +455,21 @@ Enables product telemetry for tool usage tracking.
 
 <hr />
 
+## `FLOW_TOOLS_ENABLED`
+
+Controls whether the Tableau Prep flow tools are registered.
+
+- Default: `false`
+- Set to `true` to enable the Tableau Prep flow tools:
+  - [`list-flows`](../../tools/flows/list-flows.md)
+  - [`get-flow`](../../tools/flows/get-flow.md)
+- Only the exact value `true` enables them; any other value (or leaving it unset) keeps them
+  disabled.
+- When enabled, individual flow tools can still be excluded via
+  [`EXCLUDE_TOOLS`](#exclude_tools) (e.g. `EXCLUDE_TOOLS=flow`).
+
+<hr />
+
 ## `ADMIN_TOOLS_ENABLED`
 
 Enables admin-only tools that require site administrator permissions.
@@ -427,21 +477,24 @@ Enables admin-only tools that require site administrator permissions.
 - Default: `false`
 - When `true`, enables tools that are restricted to Tableau site administrators:
   - [`list-extract-refresh-tasks`](../../tools/tasks/list-extract-refresh-tasks.md)
+  - [`update-cloud-extract-refresh-task`](../../tools/tasks/update-cloud-extract-refresh-task.md)
   - [`list-jobs`](../../tools/jobs/list-jobs.md)
-  - [`query-admin-insights-ts-events`](../../tools/admin-insights/query-admin-insights-ts-events.md)
-  - [`query-admin-insights-site-content`](../../tools/admin-insights/query-admin-insights-site-content.md)
-  - [`get-stale-content-report`](../../tools/admin-insights/get-stale-content-report.md)
+  - [`list-users`](../../tools/users/list-users.md)
+  - [`delete-content`](../../tools/content/delete-content.md)
+  - [`query-admin-insights`](../../tools/admin-insights/query-admin-insights.md)
 - These tools require the user to have one of the following site roles:
   - SiteAdministratorCreator
   - SiteAdministratorExplorer
   - ServerAdministrator
-- Admin tools perform runtime role verification and will return a 403 error if the user does not have the required permissions.
+- Admin tools perform runtime role verification and will return a 403 error if the user does not
+  have the required permissions.
 
 <hr />
 
 ## `ADMIN_GATE_CACHE_TTL_MINUTES`
 
 TTL (in minutes) for caches used by admin-only tools. Affects:
+
 - Admin role lookups (`assertAdmin`)
 - Admin Insights dataset LUID resolution
 - Project ID → name resolution used by `get-stale-content-report`
@@ -450,19 +503,39 @@ TTL (in minutes) for caches used by admin-only tools. Affects:
 - Minimum: `1`
 - Maximum: `1440` (24 hours)
 
-Tune lower if site role / project metadata changes need to propagate faster. Tune higher under memory pressure to reduce REST traffic.
+Tune lower if site role / project metadata changes need to propagate faster. Tune higher under
+memory pressure to reduce REST traffic.
+
+<hr />
+
+## `MUTATION_PREVIEW_TTL_MINUTES`
+
+TTL (in minutes) for the single-use confirmation tokens minted by the preview phase of two-phase
+mutation tools (e.g. [`delete-content`](../../tools/content/delete-content.md)).
+A token must be supplied on the confirmed call before it expires, otherwise the caller must re-run
+the preview.
+
+- Default: `5`
+- Minimum: `1`
+- Maximum: `1440` (24 hours)
+
+Tune lower to shorten the window in which a preview token is valid. Tune higher to give callers more
+time between preview and confirmation.
 
 <hr />
 
 ## `STALE_CONTENT_MIN_AGE_DAYS`
 
-Default minimum days since last access for content to be considered stale by the [`get-stale-content-report`](../../tools/admin-insights/get-stale-content-report.md) tool. Callers can pass an explicit `minAgeDays` argument to override per-call.
+Default minimum days since last access for content to be considered stale by the
+[`query-admin-insights`](../../tools/admin-insights/query-admin-insights.md) tool's `kind: "stale-content"` backend. Callers
+can pass an explicit `minAgeDays` argument to override per-call.
 
 - Default: `90`
 - Minimum: `1`
 - Maximum: `3650` (10 years)
 
-Overridable per-site via [Site Settings](site-settings.md) and per-request via [Request Overrides](request-overrides.md#stale_content_min_age_days).
+Overridable per-site via [Site Settings](site-settings.md) and per-request via
+[Request Overrides](request-overrides.md#stale_content_min_age_days).
 
 <hr />
 
@@ -485,3 +558,21 @@ discretion.
   "isError": true
 }
 ```
+
+<hr />
+
+## `CSP_ALLOWED_DOMAINS`
+
+A comma-separated list of domains to allow in the Content-Security-Policy header for MCP apps (when the `mcp-apps` feature is enabled).
+
+- Default: `https://*.online.tableau.com,https://*.tableau.com`
+- The configured [`SERVER`](#server) origin is automatically appended to this list.
+- Use this to quickly add or modify allowed domains without requiring a code change and release.
+
+**Example:**
+
+```bash
+CSP_ALLOWED_DOMAINS=https://*.mycompany.tableau.com,https://*.online.tableau.com
+```
+
+This allows embedding Tableau visualizations from custom Tableau Server domains in addition to the default Tableau Cloud domains.

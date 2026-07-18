@@ -58,9 +58,27 @@ export class DatasourceNotAllowedError extends McpToolError {
   }
 }
 
+// Thrown by the two-phase delete tools when a confirmed delete (`confirm: true`) is requested but the
+// target resource is not carrying the pending-deletion tag. The tag is server-side state set by a
+// prior, distinct preview call, so its presence — verified by a fresh re-fetch — is the authoritative
+// proof that a preview actually ran. Unlike a caller-computable confirmation token, this gate cannot
+// be bypassed by deriving a value: the caller has no way to mark the resource as pending deletion
+// other than by running the preview phase. statusCode 409: a required precondition/state is missing.
+export class PreviewNotRunError extends McpToolError {
+  constructor(message: string) {
+    super({ type: 'preview-not-run', message, statusCode: 409 });
+  }
+}
+
 export class FeatureDisabledError extends McpToolError {
   constructor(message: string) {
     super({ type: 'feature-disabled', message, statusCode: 404 });
+  }
+}
+
+export class FlowNotAllowedError extends McpToolError {
+  constructor(message: string) {
+    super({ type: 'flow-not-allowed', message, statusCode: 403 });
   }
 }
 
@@ -105,6 +123,29 @@ export class PulseNotAvailableError extends McpToolError {
 export class QueryValidationError extends McpToolError {
   constructor(message: string) {
     super({ type: 'query-validation', message, statusCode: 400 });
+  }
+}
+
+export class PulseInsightsApiError extends McpToolError {
+  constructor(message: string, statusCode: number, errorCode?: string, details?: string) {
+    super({
+      type: 'pulse-insights-api-error',
+      message,
+      statusCode,
+      internalStatusCode: statusCode,
+      internalError: errorCode,
+      internalErrorDetails: details,
+    });
+  }
+}
+
+export class EmbedTokenNotAvailableError extends McpToolError {
+  constructor() {
+    super({
+      type: 'embed-token-not-available',
+      message: 'Failed to get an embed token for the current authentication configuration.',
+      statusCode: 500,
+    });
   }
 }
 

@@ -271,6 +271,37 @@ describe('Config', () => {
     expect(config.breakGlassDisableGlobally).toBe(true);
   });
 
+  it('should set flowToolsEnabled to false by default', () => {
+    const config = new Config();
+    expect(config.flowToolsEnabled).toBe(false);
+  });
+
+  it('should set flowToolsEnabled to true when FLOW_TOOLS_ENABLED is "true"', () => {
+    vi.stubEnv('FLOW_TOOLS_ENABLED', 'true');
+
+    const config = new Config();
+    expect(config.flowToolsEnabled).toBe(true);
+  });
+
+  it('should keep flowToolsEnabled false for values other than "true"', () => {
+    vi.stubEnv('FLOW_TOOLS_ENABLED', 'yes');
+
+    const config = new Config();
+    expect(config.flowToolsEnabled).toBe(false);
+  });
+
+  it('should default insightsToolsEnabled to false', () => {
+    const config = new Config();
+    expect(config.insightsToolsEnabled).toBe(false);
+  });
+
+  it('should set insightsToolsEnabled to true when INSIGHTS_TOOLS_ENABLED is "true"', () => {
+    vi.stubEnv('INSIGHTS_TOOLS_ENABLED', 'true');
+
+    const config = new Config();
+    expect(config.insightsToolsEnabled).toBe(true);
+  });
+
   describe('HTTP server config parsing', () => {
     it('should set sslKey to default when SSL_KEY is not set', () => {
       const config = new Config();
@@ -584,7 +615,7 @@ describe('Config', () => {
       issuer: 'https://example.com',
       redirectUri: 'https://example.com/Callback',
       resourceUri: 'http://127.0.0.1:3927',
-      globalResourceUri: '',
+      globalResourceUris: [],
       lockSite: true,
       jwePrivateKey: '',
       jwePrivateKeyPath: 'path/to/private.pem',
@@ -604,7 +635,7 @@ describe('Config', () => {
         clientIdSecretPairs: null,
         redirectUri: '',
         resourceUri: 'http://127.0.0.1:3927',
-        globalResourceUri: '',
+        globalResourceUris: [],
         lockSite: true,
         jwePrivateKey: '',
         jwePrivateKeyPath: '',
@@ -663,14 +694,39 @@ describe('Config', () => {
       });
     });
 
-    it('should set globalResourceUri to the specified value when OAUTH_GLOBAL_RESOURCE_URI is set', () => {
+    it('should set globalResourceUris to the specified value when OAUTH_GLOBAL_RESOURCE_URIS is set', () => {
       stubDefaultOAuthEnvVars();
-      vi.stubEnv('OAUTH_GLOBAL_RESOURCE_URI', 'https://global.example.com');
+      vi.stubEnv('OAUTH_GLOBAL_RESOURCE_URIS', 'https://global.example.com');
 
       const config = new Config();
       expect(config.oauth).toEqual({
         ...defaultOAuthConfig,
-        globalResourceUri: 'https://global.example.com',
+        globalResourceUris: ['https://global.example.com'],
+      });
+    });
+
+    it('should parse comma-separated OAUTH_GLOBAL_RESOURCE_URIS into multiple audiences', () => {
+      stubDefaultOAuthEnvVars();
+      vi.stubEnv(
+        'OAUTH_GLOBAL_RESOURCE_URIS',
+        'https://global.example.com, https://other.example.com',
+      );
+
+      const config = new Config();
+      expect(config.oauth).toEqual({
+        ...defaultOAuthConfig,
+        globalResourceUris: ['https://global.example.com', 'https://other.example.com'],
+      });
+    });
+
+    it('should ignore empty entries in OAUTH_GLOBAL_RESOURCE_URIS', () => {
+      stubDefaultOAuthEnvVars();
+      vi.stubEnv('OAUTH_GLOBAL_RESOURCE_URIS', 'https://global.example.com,,  ,');
+
+      const config = new Config();
+      expect(config.oauth).toEqual({
+        ...defaultOAuthConfig,
+        globalResourceUris: ['https://global.example.com'],
       });
     });
 
@@ -825,6 +881,70 @@ describe('Config', () => {
 
       const config = new Config();
       expect(config.oauth.dnsServers).toEqual(['8.8.8.8', '8.8.4.4']);
+    });
+  });
+
+  describe('CSP allowed domains', () => {
+    it('should use default CSP domains when CSP_ALLOWED_DOMAINS is not set', () => {
+      const config = new Config();
+      expect(config.cspAllowedDomains).toEqual([
+        'https://*.online.tableau.com',
+        'https://*.tableau.com',
+        'https://my-tableau-server.com',
+      ]);
+    });
+
+    it('should parse custom CSP domains when CSP_ALLOWED_DOMAINS is set', () => {
+      vi.stubEnv('CSP_ALLOWED_DOMAINS', 'https://*.example.com,https://test.com');
+
+      const config = new Config();
+      expect(config.cspAllowedDomains).toEqual([
+        'https://*.online.tableau.com',
+        'https://*.tableau.com',
+        'https://my-tableau-server.com',
+        'https://*.example.com',
+        'https://test.com',
+      ]);
+    });
+  });
+
+  describe('Feature gate provider configuration', () => {
+    it('should default to "server" when FEATURE_GATE_PROVIDER is not set', () => {
+      const config = new Config();
+      expect(config.featureGate.provider).toBe('server');
+    });
+
+    it('should use "server" when FEATURE_GATE_PROVIDER is "server"', () => {
+      vi.stubEnv('FEATURE_GATE_PROVIDER', 'server');
+
+      const config = new Config();
+      expect(config.featureGate.provider).toBe('server');
+    });
+
+    it('should use "custom" when FEATURE_GATE_PROVIDER is "custom" with valid config', () => {
+      vi.stubEnv('FEATURE_GATE_PROVIDER', 'custom');
+      vi.stubEnv('FEATURE_GATE_PROVIDER_CONFIG', '{"module":"./my-feature-gate.js"}');
+
+      const config = new Config();
+      expect(config.featureGate.provider).toBe('custom');
+      if (config.featureGate.provider === 'custom') {
+        expect(config.featureGate.providerConfig.module).toBe('./my-feature-gate.js');
+      }
+    });
+
+    it('should throw error when FEATURE_GATE_PROVIDER is "custom" without config', () => {
+      vi.stubEnv('FEATURE_GATE_PROVIDER', 'custom');
+
+      expect(() => new Config()).toThrow(
+        'FEATURE_GATE_PROVIDER_CONFIG is required when FEATURE_GATE_PROVIDER is "custom"',
+      );
+    });
+
+    it('should fall back to "server" when FEATURE_GATE_PROVIDER is invalid', () => {
+      vi.stubEnv('FEATURE_GATE_PROVIDER', 'invalid');
+
+      const config = new Config();
+      expect(config.featureGate.provider).toBe('server');
     });
   });
 });
