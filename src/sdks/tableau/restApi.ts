@@ -327,6 +327,15 @@ export class RestApi {
     };
   };
 
+  // Snapshot the full signed-in credentials so a session can be cached and reused across instances
+  // without re-authenticating. Returns undefined when not yet signed in.
+  getCredentialsSnapshot = (): RestApiCredentials | undefined => this._creds;
+
+  // Restore a previously snapshotted session onto this instance instead of signing in again.
+  restoreCredentials = (creds: RestApiCredentials): void => {
+    this._creds = creds;
+  };
+
   private _addInterceptors = (baseUrl: string, interceptors: AxiosInterceptor): void => {
     interceptors.request.use(
       (config) => {

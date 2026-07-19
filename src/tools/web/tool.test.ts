@@ -134,6 +134,30 @@ describe('Tool', () => {
     expect(result.content[0].text).toBe('requestId: 2, error: Test error');
   });
 
+  it('should surface the Tableau error summary and detail on an API error', async () => {
+    const tool = new WebTool(mockParams);
+    const callback = vi.fn().mockImplementation(async (_requestId: string) => {
+      throw {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { error: { code: '400001', summary: 'Bad Request', detail: 'Invalid field name' } },
+        },
+      };
+    });
+
+    const result = await tool.logAndExecute({
+      extra: mockExtra,
+      args: { param1: 'test' },
+      callback,
+      constrainSuccessResult: (result) => ({ type: 'success', result }),
+    });
+
+    expect(result.isError).toBe(true);
+    invariant(result.content[0].type === 'text');
+    expect(result.content[0].text).toBe('requestId: 2, error: Bad Request: Invalid field name');
+  });
+
   it('should constrain the success result', async () => {
     const tool = new WebTool(mockParams);
     const successResult = { data: 'success' };

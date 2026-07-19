@@ -15,12 +15,22 @@ import {
   ResponseInterceptorConfig,
 } from './sdks/interceptors.js';
 import { buildAuthConfig } from './sdks/tableau/buildAuthConfig.js';
+import {
+  buildSessionCacheKey,
+  getCachedSession,
+  getOrCreateSession,
+  invalidateCachedSession,
+} from './sdks/tableau/patSessionCache.js';
 import { RestApi } from './sdks/tableau/restApi.js';
 import { Server } from './server.js';
 import { TableauWebRequestHandlerExtra } from './tools/web/toolContext.js';
 import { isAxiosError } from './utils/axios.js';
 import { getExceptionMessage } from './utils/getExceptionMessage.js';
 import invariant from './utils/invariant.js';
+
+function isUnauthorizedError(error: unknown): boolean {
+  return isAxiosError(error) && error.response?.status === 401;
+}
 
 type JwtScopes =
   | 'tableau:viz_data_service:read'
@@ -64,8 +74,9 @@ export type RestApiArgs = Pick<
 const getNewRestApiInstanceAsync = async (
   args: RestApiArgs & {
     jwtScopes: Set<JwtScopes>;
+    skipAbortListener?: boolean;
   },
-): Promise<{ restApi: RestApi; signOutWhenCompleted: boolean }> => {
+): Promise<{ restApi: RestApi; signOutWhenCompleted: boolean; patCacheKey?: string }> => {
   const {
     config,
     server,
@@ -75,9 +86,12 @@ const getNewRestApiInstanceAsync = async (
     disableLogging,
     setSiteLuid,
     setUserLuid,
+    skipAbortListener,
   } = args;
 
-  if (!disableLogging) {
+  // The abort listener is registered once per useRestApi call; a 401 retry rebuilds the instance on
+  // the same signal, so it passes skipAbortListener to avoid a duplicate registration.
+  if (!disableLogging && !skipAbortListener) {
     const { requestId } = args;
     signal.addEventListener(
       'abort',
@@ -117,6 +131,7 @@ const getNewRestApiInstanceAsync = async (
   });
 
   let signOutWhenCompleted = true;
+  let patCacheKey: string | undefined;
   if (tableauAuthInfo?.type === 'Passthrough') {
     if (!tableauAuthInfo.raw || !tableauAuthInfo.userId) {
       throw new Error('Auth info is required when not signing in first.');
@@ -126,7 +141,27 @@ const getNewRestApiInstanceAsync = async (
     restApi.setCredentials(tableauAuthInfo.raw, tableauAuthInfo.userId);
   } else {
     const authConfig = buildAuthConfig({ config, tableauAuthInfo, scopes: jwtScopes });
-    if (authConfig) {
+    if (authConfig?.type === 'pat') {
+      // A PAT allows only one active session, so reuse a single cached session across calls instead of
+      // signing in and out per call. The session is kept alive (never signed out here) and refreshed on
+      // expiry or a 401; useRestApi drops it and signs in fresh on a 401 from a stale cached session.
+      patCacheKey = buildSessionCacheKey(authConfig.siteName, authConfig.patName);
+      const cached = getCachedSession(patCacheKey);
+      if (cached) {
+        restApi.restoreCredentials(cached);
+      } else {
+        const credentials = await getOrCreateSession(patCacheKey, async () => {
+          await restApi.signIn(authConfig);
+          const snapshot = restApi.getCredentialsSnapshot();
+          invariant(snapshot, 'Sign-in did not produce credentials');
+          return snapshot;
+        });
+        restApi.restoreCredentials(credentials);
+      }
+      signOutWhenCompleted = false;
+      setSiteLuid?.(restApi.siteId);
+      setUserLuid?.(restApi.userId);
+    } else if (authConfig) {
       await restApi.signIn(authConfig);
       setSiteLuid?.(restApi.siteId);
       setUserLuid?.(restApi.userId);
@@ -149,7 +184,7 @@ const getNewRestApiInstanceAsync = async (
     }
   }
 
-  return { restApi, signOutWhenCompleted };
+  return { restApi, signOutWhenCompleted, patCacheKey };
 };
 
 export const useRestApi = async <T>(
@@ -159,34 +194,48 @@ export const useRestApi = async <T>(
   },
 ): Promise<T> => {
   const { callback, ...remaining } = args;
-  const { restApi, signOutWhenCompleted } = await getNewRestApiInstanceAsync({
-    ...remaining,
-    jwtScopes: new Set(args.jwtScopes),
-  });
-  try {
-    return await callback(restApi);
-  } finally {
-    if (signOutWhenCompleted) {
-      // Tableau REST sessions for 'pat' and 'direct-trust' are intentionally ephemeral.
-      // Sessions for 'oauth' and 'passthrough' are not. Signing out would invalidate the session,
-      // preventing the access token from being reused for subsequent requests.
-      //
-      // Isolate the sign-out so a teardown failure can NEVER mask the callback's real result or
-      // error. A throw inside `finally` replaces whatever the `try` was returning or throwing, so an
-      // un-caught sign-out error would clobber the real outcome — e.g. a callback that 404s on a
-      // missing resource surfaces to the caller as the sign-out's 401 once the session is torn down
-      // (W-23202034). Swallow-and-log instead: sign-out is best-effort cleanup, and the ephemeral
-      // session expires on its own regardless.
-      try {
-        await restApi.signOut();
-        log({ message: 'Signed out of Tableau REST API', level: 'debug', logger: 'auth' });
-      } catch (error) {
-        log({
-          message: `Failed to sign out of Tableau REST API: ${getExceptionMessage(error)}`,
-          level: 'warning',
-          logger: 'auth',
-          data: error,
-        });
+  const jwtScopes = new Set(args.jwtScopes);
+  let retriedAfterUnauthorized = false;
+  for (;;) {
+    const { restApi, signOutWhenCompleted, patCacheKey } = await getNewRestApiInstanceAsync({
+      ...remaining,
+      jwtScopes,
+      skipAbortListener: retriedAfterUnauthorized,
+    });
+    try {
+      return await callback(restApi);
+    } catch (error) {
+      // A cached PAT session can be terminated server-side (single-session rule or expiry) and surface as a
+      // 401. Drop the stale session and sign in fresh exactly once before giving up.
+      if (patCacheKey && !retriedAfterUnauthorized && isUnauthorizedError(error)) {
+        invalidateCachedSession(patCacheKey);
+        retriedAfterUnauthorized = true;
+        continue;
+      }
+      throw error;
+    } finally {
+      if (signOutWhenCompleted) {
+        // Ephemeral sessions ('direct-trust', 'uat') are signed out after use. Reused sessions
+        // ('pat' via the session cache, 'oauth', 'passthrough') are not: signing out would invalidate
+        // the session and prevent the token from being reused for subsequent requests.
+        //
+        // Isolate the sign-out so a teardown failure can NEVER mask the callback's real result or
+        // error. A throw inside `finally` replaces whatever the `try` was returning or throwing, so an
+        // un-caught sign-out error would clobber the real outcome — e.g. a callback that 404s on a
+        // missing resource surfaces to the caller as the sign-out's 401 once the session is torn down.
+        // Swallow-and-log instead: sign-out is best-effort cleanup, and the ephemeral session expires
+        // on its own regardless.
+        try {
+          await restApi.signOut();
+          log({ message: 'Signed out of Tableau REST API', level: 'debug', logger: 'auth' });
+        } catch (error) {
+          log({
+            message: `Failed to sign out of Tableau REST API: ${getExceptionMessage(error)}`,
+            level: 'warning',
+            logger: 'auth',
+            data: error,
+          });
+        }
       }
     }
   }

@@ -4,7 +4,9 @@ import { z } from 'zod';
 
 import { ViewNotAllowedError } from '../../../errors/mcpToolError.js';
 import { useRestApi } from '../../../restApiInstance.js';
+import { isRateLimitError } from '../../../sdks/tableau/tableauApiError.js';
 import { WebMcpServer } from '../../../server.web.js';
+import { retry } from '../../../utils/retry.js';
 import { resourceAccessChecker } from '../resourceAccessChecker.js';
 import { WebTool } from '../tool.js';
 
@@ -52,11 +54,17 @@ export const getGetViewDataTool = (server: WebMcpServer): WebTool<typeof paramsS
               ...extra,
               jwtScopes: getViewDataTool.requiredApiScopes,
               callback: async (restApi) => {
-                return await restApi.viewsMethods.queryViewData({
-                  viewId,
-                  siteId: restApi.siteId,
-                  viewFilters,
-                });
+                // Retry rate-limited requests on the same session with backoff, so a transient
+                // rate limit doesn't surface as a hard failure.
+                return await retry(
+                  () =>
+                    restApi.viewsMethods.queryViewData({
+                      viewId,
+                      siteId: restApi.siteId,
+                      viewFilters,
+                    }),
+                  { retryIf: isRateLimitError, delayFactorMs: 1000 },
+                );
               },
             }),
           );

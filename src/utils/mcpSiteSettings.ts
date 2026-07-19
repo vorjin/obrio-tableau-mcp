@@ -1,4 +1,5 @@
 import { Config, getConfig } from '../config.js';
+import { log } from '../logging/logger.js';
 import {
   getOverridableConfig,
   isOverridableVariable,
@@ -9,12 +10,16 @@ import { RestApi } from '../sdks/tableau/restApi.js';
 import { McpSiteSettings, McpSiteSettingsResult } from '../sdks/tableau/types/mcpSiteSettings.js';
 import { isAxiosError } from './axios.js';
 import { ExpiringMap } from './expiringMap.js';
+import { getExceptionMessage } from './getExceptionMessage.js';
 import { getSiteLuidFromAccessToken } from './getSiteLuidFromAccessToken.js';
 import { DistributiveOmit } from './types.js';
 
 type SiteNameOrSiteId = string;
 
 const MCP_SITE_SETTINGS_MIN_REST_API_VERSION = '3.29';
+// A genuine fetch failure caches empty settings only briefly, so a transient error can't silently
+// drop a site-configured content restriction for the full check interval.
+const MCP_SITE_SETTINGS_NEGATIVE_CACHE_MS = 60 * 1000;
 let mcpSiteSettingsCache: ExpiringMap<SiteNameOrSiteId, McpSiteSettings>;
 
 async function getMcpSiteSettings({
@@ -47,6 +52,11 @@ async function getMcpSiteSettings({
   }
 
   const mcpSiteSettings: McpSiteSettings = {};
+  // A 403 means the feature is disabled for this site — a settled, benign state safe to cache for the
+  // full interval. Any other failure is treated as transient: proceed without overrides so the request
+  // still succeeds, but cache the empty fallback only briefly so a configured restriction isn't silently
+  // dropped for the whole interval.
+  let fetchFailed = false;
   try {
     const result: McpSiteSettingsResult = await useRestApi({
       ...restApiArgs,
@@ -60,24 +70,25 @@ async function getMcpSiteSettings({
       }
     }
   } catch (error) {
-    if (isAxiosError(error)) {
-      if (error.response?.status === 500) {
-        throw new Error(
-          'Internal Server Error: The MCP settings are in a bad state and need to be overwritten.',
-        );
-      } else if (error.response?.status !== 403) {
-        throw new Error('An unexpected error occurred while getting MCP settings for site.');
-      }
-      // else: (403 status code) MCP settings feature flag was disabled on this site,
-      // continue and cache with empty settings.
-    }
+    const featureDisabled = isAxiosError(error) && error.response?.status === 403;
+    fetchFailed = !featureDisabled;
+    log({
+      message: `Failed to get MCP settings for site; continuing without site overrides: ${getExceptionMessage(error)}`,
+      level: 'warning',
+      logger: 'mcp-site-settings',
+      data: error,
+    });
   }
 
   if (!config.allowSitesToConfigureRequestOverrides) {
     delete mcpSiteSettings.ALLOWED_REQUEST_OVERRIDES;
   }
 
-  mcpSiteSettingsCache.set(cacheKey, mcpSiteSettings);
+  mcpSiteSettingsCache.set(
+    cacheKey,
+    mcpSiteSettings,
+    fetchFailed ? MCP_SITE_SETTINGS_NEGATIVE_CACHE_MS : undefined,
+  );
   return mcpSiteSettings;
 }
 

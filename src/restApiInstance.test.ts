@@ -9,6 +9,7 @@ import {
   getResponseInterceptor,
   useRestApi,
 } from './restApiInstance.js';
+import { clearCachedSessions } from './sdks/tableau/patSessionCache.js';
 import { RestApi } from './sdks/tableau/restApi.js';
 import { WebMcpServer } from './server.web.js';
 
@@ -35,10 +36,12 @@ describe('restApiInstance', () => {
     vi.stubEnv('SITE_NAME', 'tc25');
     vi.stubEnv('PAT_NAME', 'sponge');
     vi.stubEnv('PAT_VALUE', 'bob');
+    // The PAT session cache is module-level; clear it so cases don't leak sessions into each other.
+    clearCachedSessions();
   });
 
   describe('useRestApi', () => {
-    it('should sign in with PAT when auth is PAT', async () => {
+    it('should sign in with PAT when auth is PAT and reuse the session (no sign-out)', async () => {
       vi.stubEnv('AUTH', 'pat');
 
       const restApi = await useRestApi({
@@ -58,7 +61,146 @@ describe('restApiInstance', () => {
         patValue: 'bob',
         siteName: 'tc25',
       });
-      expect(restApi.signOut).toHaveBeenCalled();
+      // The PAT session is cached and reused, so it is never signed out per call.
+      expect(restApi.signOut).not.toHaveBeenCalled();
+    });
+
+    it('should reuse a cached PAT session across calls without signing in again', async () => {
+      vi.stubEnv('AUTH', 'pat');
+
+      const args = {
+        config: getConfig(),
+        requestId: mockRequestId,
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        jwtScopes: [] as const,
+        signal: new AbortController().signal,
+        callback: (restApi: RestApi) => Promise.resolve(restApi),
+      };
+
+      const first = await useRestApi(args);
+      expect(first.signIn).toHaveBeenCalledTimes(1);
+
+      const second = await useRestApi(args);
+      expect(second.signIn).not.toHaveBeenCalled();
+      expect(second.restoreCredentials).toHaveBeenCalled();
+      expect(second.signOut).not.toHaveBeenCalled();
+    });
+
+    it('should sign in with PAT only once under concurrent first-calls', async () => {
+      vi.stubEnv('AUTH', 'pat');
+
+      const args = {
+        config: getConfig(),
+        requestId: mockRequestId,
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        jwtScopes: [] as const,
+        signal: new AbortController().signal,
+        callback: (restApi: RestApi) => Promise.resolve(restApi),
+      };
+
+      const results = await Promise.all([useRestApi(args), useRestApi(args), useRestApi(args)]);
+
+      const signInCalls = results.filter(
+        (restApi) => vi.mocked(restApi.signIn).mock.calls.length > 0,
+      );
+      expect(signInCalls).toHaveLength(1);
+    });
+
+    it('should drop a stale cached PAT session and sign in again on a 401', async () => {
+      vi.stubEnv('AUTH', 'pat');
+
+      const baseArgs = {
+        config: getConfig(),
+        requestId: mockRequestId,
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        jwtScopes: [] as const,
+        signal: new AbortController().signal,
+      };
+
+      // Prime the cache with a valid session.
+      await useRestApi({ ...baseArgs, callback: (restApi: RestApi) => Promise.resolve(restApi) });
+
+      // Next call reuses the cached session, gets a 401 on the first attempt, then succeeds on retry.
+      let attempts = 0;
+      const result = await useRestApi({
+        ...baseArgs,
+        callback: () => {
+          attempts += 1;
+          if (attempts === 1) {
+            return Promise.reject({ isAxiosError: true, response: { status: 401 } });
+          }
+          return Promise.resolve('recovered');
+        },
+      });
+
+      expect(result).toBe('recovered');
+      expect(attempts).toBe(2);
+    });
+
+    it('should not retry a 401 more than once', async () => {
+      vi.stubEnv('AUTH', 'pat');
+
+      let attempts = 0;
+      await expect(
+        useRestApi({
+          config: getConfig(),
+          requestId: mockRequestId,
+          server: new WebMcpServer(),
+          tableauAuthInfo: undefined,
+          jwtScopes: [],
+          signal: new AbortController().signal,
+          callback: () => {
+            attempts += 1;
+            return Promise.reject({ isAxiosError: true, response: { status: 401 } });
+          },
+        }),
+      ).rejects.toMatchObject({ response: { status: 401 } });
+
+      // Initial attempt + exactly one retry after invalidating the cached session.
+      expect(attempts).toBe(2);
+    });
+
+    it('registers the abort listener once even when a 401 triggers a retry', async () => {
+      vi.stubEnv('AUTH', 'pat');
+
+      // Prime the cache so the retried call takes the cached-session path.
+      await useRestApi({
+        config: getConfig(),
+        requestId: mockRequestId,
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        jwtScopes: [],
+        signal: new AbortController().signal,
+        callback: (restApi: RestApi) => Promise.resolve(restApi),
+      });
+
+      const controller = new AbortController();
+      const addEventListenerSpy = vi.spyOn(controller.signal, 'addEventListener');
+
+      let attempts = 0;
+      await useRestApi({
+        config: getConfig(),
+        requestId: mockRequestId,
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        jwtScopes: [],
+        signal: controller.signal,
+        callback: () => {
+          attempts += 1;
+          if (attempts === 1) {
+            return Promise.reject({ isAxiosError: true, response: { status: 401 } });
+          }
+          return Promise.resolve('ok');
+        },
+      });
+
+      const abortRegistrations = addEventListenerSpy.mock.calls.filter(
+        ([event]) => event === 'abort',
+      );
+      expect(abortRegistrations).toHaveLength(1);
     });
 
     it('should sign in with Direct Trust when auth is Direct Trust', async () => {
@@ -192,7 +334,12 @@ describe('restApiInstance', () => {
     // returned/threw — e.g. a 404 from a missing resource surfacing to the caller as the sign-out's
     // 401. Sign-out is best-effort cleanup; its failure is swallowed and logged.
     it('should not let a sign-out failure mask the callback error', async () => {
-      vi.stubEnv('AUTH', 'pat');
+      // Uses an ephemeral auth mode (direct-trust) that signs out per call; PAT reuses its session.
+      vi.stubEnv('AUTH', 'direct-trust');
+      vi.stubEnv('JWT_SUB_CLAIM', 'test-jwt-sub-claim');
+      vi.stubEnv('CONNECTED_APP_CLIENT_ID', 'test-client-id');
+      vi.stubEnv('CONNECTED_APP_SECRET_ID', 'test-secret-id');
+      vi.stubEnv('CONNECTED_APP_SECRET_VALUE', 'test-secret-value');
 
       const callbackError = new Error('Request failed with status code 404');
 
@@ -218,7 +365,11 @@ describe('restApiInstance', () => {
     });
 
     it('should not let a sign-out failure mask a successful callback result', async () => {
-      vi.stubEnv('AUTH', 'pat');
+      vi.stubEnv('AUTH', 'direct-trust');
+      vi.stubEnv('JWT_SUB_CLAIM', 'test-jwt-sub-claim');
+      vi.stubEnv('CONNECTED_APP_CLIENT_ID', 'test-client-id');
+      vi.stubEnv('CONNECTED_APP_SECRET_ID', 'test-secret-id');
+      vi.stubEnv('CONNECTED_APP_SECRET_VALUE', 'test-secret-value');
 
       const result = await useRestApi({
         config: getConfig(),

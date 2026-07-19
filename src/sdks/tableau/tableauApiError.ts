@@ -36,3 +36,15 @@ export function parseTableauApiError(error: unknown): ParsedTableauApiError | nu
     ...parsed.data.error,
   };
 }
+
+/**
+ * True when the error is a Tableau rate-limit response — HTTP 429, or the `429000` error code that
+ * Tableau returns in the body. Callers use it to decide whether a request is worth retrying.
+ */
+export function isRateLimitError(error: unknown): boolean {
+  if (isAxiosError(error) && error.response?.status === 429) {
+    return true;
+  }
+
+  return parseTableauApiError(error)?.code === '429000';
+}

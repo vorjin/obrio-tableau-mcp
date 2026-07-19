@@ -31,6 +31,13 @@ vi.mock('./sdks/tableau/restApi.js', async (importOriginal) => {
       signOut: vi.fn().mockResolvedValue(undefined),
       setCredentials: vi.fn(),
       setBearerToken: vi.fn(),
+      getCredentialsSnapshot: vi.fn().mockReturnValue({
+        type: 'X-Tableau-Auth',
+        site: { id: 'abc123' },
+        user: { id: 'default-user-id' },
+        token: 'mock-token',
+      }),
+      restoreCredentials: vi.fn(),
       serverMethods: {
         getServerInfo: vi.fn().mockResolvedValue({
           productVersion: testProductVersion,

@@ -4,6 +4,7 @@ import { ZodRawShape } from 'zod';
 
 import { ZodiosValidationError } from '../../errors/mcpToolError.js';
 import { log } from '../../logging/logger.js';
+import { parseTableauApiError } from '../../sdks/tableau/tableauApiError.js';
 import { WebMcpServer } from '../../server.web.js';
 import { getRequiredApiScopesForTool, TableauApiScope } from '../../server/oauth/scopes.js';
 import {
@@ -269,12 +270,20 @@ function getErrorResult(requestId: RequestId, error: unknown): CallToolResult {
     };
   }
 
+  // Tableau returns a structured `{ error: { summary, detail } }` body on most 4xx responses. Surface
+  // that reason instead of the generic axios `Request failed with status code N`, which is otherwise lost.
+  const tableauError = parseTableauApiError(error);
+  const message =
+    tableauError && (tableauError.summary || tableauError.detail)
+      ? [tableauError.summary, tableauError.detail].filter(Boolean).join(': ')
+      : getExceptionMessage(error);
+
   return {
     isError: true,
     content: [
       {
         type: 'text',
-        text: `requestId: ${requestId}, error: ${getExceptionMessage(error)}`,
+        text: `requestId: ${requestId}, error: ${message}`,
       },
     ],
   };

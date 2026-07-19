@@ -121,4 +121,74 @@ describe('mcpSiteSettings', () => {
 
     expect(mocks.mockGetMcpSiteSettings).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to empty overrides when the settings fetch fails, without throwing', async () => {
+    vi.stubEnv('ENABLE_MCP_SITE_SETTINGS', 'true');
+    // A distinct site name keys a fresh cache entry so this case isn't served the earlier override.
+    vi.stubEnv('SITE_NAME', 'fail-open-site');
+    mocks.mockGetMcpSiteSettings.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 500, data: {} },
+    });
+
+    const config = await getConfigWithOverrides({
+      restApiArgs: {
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        disableLogging: true,
+      },
+      requestOverrides: undefined,
+    });
+
+    expect(mocks.mockGetMcpSiteSettings).toHaveBeenCalled();
+    expect(config.includeTools).toEqual([]);
+    expect(config.excludeTools).toEqual([]);
+    expect(config.boundedContext).toEqual({
+      projectIds: null,
+      datasourceIds: null,
+      workbookIds: null,
+      viewIds: null,
+      tags: null,
+    });
+  });
+
+  it('caches an empty fallback only briefly on a genuine error, then re-fetches', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubEnv('ENABLE_MCP_SITE_SETTINGS', 'true');
+      vi.stubEnv('SITE_NAME', 'negative-cache-site');
+      // This file's beforeEach doesn't reset mocks, so isolate this case's call count and behavior.
+      mocks.mockGetMcpSiteSettings.mockReset();
+
+      const restApiArgs = {
+        server: new WebMcpServer(),
+        tableauAuthInfo: undefined,
+        disableLogging: true as const,
+      };
+
+      mocks.mockGetMcpSiteSettings.mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 500, data: {} },
+      });
+      await getConfigWithOverrides({ restApiArgs, requestOverrides: undefined });
+      expect(mocks.mockGetMcpSiteSettings).toHaveBeenCalledTimes(1);
+
+      // Within the short negative-cache window: served from cache, no re-fetch.
+      await getConfigWithOverrides({ restApiArgs, requestOverrides: undefined });
+      expect(mocks.mockGetMcpSiteSettings).toHaveBeenCalledTimes(1);
+
+      // After the negative-cache window (but well within the full interval): the empty fallback has
+      // expired, so a configured restriction is picked back up on the next fetch.
+      vi.advanceTimersByTime(61 * 1000);
+      mocks.mockGetMcpSiteSettings.mockResolvedValueOnce({
+        settings: [{ key: 'INCLUDE_VIEW_IDS', value: 'view1' }],
+      });
+      const config = await getConfigWithOverrides({ restApiArgs, requestOverrides: undefined });
+
+      expect(mocks.mockGetMcpSiteSettings).toHaveBeenCalledTimes(2);
+      expect(config.boundedContext.viewIds).toEqual(new Set(['view1']));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
