@@ -20,6 +20,53 @@ function isAuthType(auth: unknown): auth is AuthType {
   return authTypes.some((type) => type === auth);
 }
 
+/** A client permitted to call the server, identified by a pre-shared bearer token. */
+export type StaticAuthClient = {
+  name: string;
+  token: string;
+};
+
+/**
+ * Parses the client token list from its environment representation, a comma-separated list of
+ * `name=token` pairs. Each entry splits on its first `=` only, so a token may itself contain `=`.
+ * Entries missing a name or a token are skipped. Throws when a value is present but yields no
+ * usable entry, and when two clients share a token, since a token is the sole identifier.
+ */
+function parseStaticAuthClients(mcpUsers: string | undefined): StaticAuthClient[] {
+  if (!mcpUsers?.trim()) {
+    return [];
+  }
+
+  const clients: StaticAuthClient[] = [];
+  const seenTokens = new Set<string>();
+
+  for (const entry of mcpUsers.split(',')) {
+    const separatorIndex = entry.indexOf('=');
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const name = entry.slice(0, separatorIndex).trim();
+    const token = entry.slice(separatorIndex + 1).trim();
+    if (!name || !token) {
+      continue;
+    }
+
+    if (seenTokens.has(token)) {
+      throw new Error('MCP_USERS assigns the same token to more than one client');
+    }
+
+    seenTokens.add(token);
+    clients.push({ name, token });
+  }
+
+  if (clients.length === 0) {
+    throw new Error('MCP_USERS is set but contains no valid "name=token" entry');
+  }
+
+  return clients;
+}
+
 export class Config extends BaseConfig {
   auth: AuthType;
   server: string;
@@ -48,6 +95,7 @@ export class Config extends BaseConfig {
   enableMcpSiteSettings: boolean;
   allowSitesToConfigureRequestOverrides: boolean;
   enablePassthroughAuth: boolean;
+  staticAuthClients: StaticAuthClient[];
   oauth: {
     enabled: boolean;
     embeddedAuthzServer: boolean;
@@ -115,6 +163,7 @@ export class Config extends BaseConfig {
       ENABLE_MCP_SITE_SETTINGS: enableMcpSiteSettings,
       ALLOW_SITES_TO_CONFIGURE_REQUEST_OVERRIDES: allowSitesToConfigureRequestOverrides,
       ENABLE_PASSTHROUGH_AUTH: enablePassthroughAuth,
+      MCP_USERS: mcpUsers,
       DANGEROUSLY_DISABLE_OAUTH: disableOauth,
       OAUTH_EMBEDDED_AUTHZ_SERVER: oauthEmbeddedAuthzServer,
       OAUTH_ISSUER: oauthIssuer,
@@ -192,6 +241,7 @@ export class Config extends BaseConfig {
     this.enableMcpSiteSettings = enableMcpSiteSettings !== 'false';
     this.allowSitesToConfigureRequestOverrides = allowSitesToConfigureRequestOverrides === 'true';
     this.enablePassthroughAuth = enablePassthroughAuth === 'true';
+    this.staticAuthClients = parseStaticAuthClients(mcpUsers);
     const disableOauthOverride = disableOauth === 'true';
     const disableScopes = oauthDisableScopes === 'true';
     const enforceScopes = !disableScopes;
@@ -314,10 +364,20 @@ export class Config extends BaseConfig {
     this.auth = isAuthType(auth) ? auth : this.oauth.enabled ? 'oauth' : 'pat';
     this.transport = isTransport(transport) ? transport : this.oauth.enabled ? 'http' : 'stdio';
 
-    if (this.transport === 'http' && !disableOauthOverride && !this.oauth.issuer) {
+    if (
+      this.transport === 'http' &&
+      !disableOauthOverride &&
+      !this.oauth.issuer &&
+      this.staticAuthClients.length === 0
+    ) {
       throw new Error(
-        'OAUTH_ISSUER must be set when TRANSPORT is "http" unless DANGEROUSLY_DISABLE_OAUTH is "true"',
+        'One of OAUTH_ISSUER or MCP_USERS must be set when TRANSPORT is "http" unless DANGEROUSLY_DISABLE_OAUTH is "true"',
       );
+    }
+
+    // Both gates run in sequence, so combining them would demand every caller satisfy both.
+    if (this.transport === 'http' && this.oauth.enabled && this.staticAuthClients.length > 0) {
+      throw new Error('OAUTH_ISSUER and MCP_USERS are mutually exclusive; set exactly one');
     }
 
     if (this.auth === 'oauth') {

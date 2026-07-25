@@ -207,6 +207,7 @@ Key variables (see `env.example.list` and `.env`):
 - `PAT_NAME` / `PAT_VALUE`: PAT credentials
 - `HTTP_PORT_ENV_VAR_NAME`: Port env var name (default: PORT)
 - `DANGEROUSLY_DISABLE_OAUTH`: Disable OAuth for HTTP (testing only)
+- `MCP_USERS`: Comma-separated `name=token` pre-shared bearer tokens for HTTP clients; mutually exclusive with `OAUTH_ISSUER`
 - `DISABLE_SESSION_MANAGEMENT`: Stateless HTTP mode
 - `ENABLE_PASSTHROUGH_AUTH`: Allow X-Tableau-Auth header
 - `ENABLE_MCP_SITE_SETTINGS`: Enable per-site configuration

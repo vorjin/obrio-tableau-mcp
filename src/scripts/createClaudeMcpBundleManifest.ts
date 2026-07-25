@@ -456,6 +456,15 @@ const envVars = {
     required: false,
     sensitive: false,
   },
+  MCP_USERS: {
+    includeInUserConfig: false,
+    type: 'string',
+    title: 'MCP Client Tokens',
+    description:
+      'Comma-separated `name=token` pairs of pre-shared bearer tokens accepted when transport is http.',
+    required: false,
+    sensitive: true,
+  },
   DANGEROUSLY_DISABLE_OAUTH: {
     includeInUserConfig: false,
     type: 'boolean',

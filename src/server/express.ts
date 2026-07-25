@@ -25,8 +25,29 @@ import { TableauAuthInfo } from './oauth/schemas.js';
 import { AuthenticatedRequest } from './oauth/types.js';
 import { passthroughAuthMiddleware, X_TABLEAU_AUTH_HEADER } from './passthroughAuthMiddleware.js';
 import { X_TABLEAU_MCP_CONFIG_HEADER } from './requestUtils.js';
+import { staticTokenAuthMiddleware } from './staticTokenAuthMiddleware.js';
 
 const SESSION_ID_HEADER = 'mcp-session-id';
+
+/** How long a client may take to send its request headers before the socket is closed. */
+const HEADERS_TIMEOUT_MS = 30_000;
+
+/**
+ * How long an idle keep-alive socket is retained between requests. Set above the idle timeout of a
+ * typical fronting proxy so the proxy does not reuse a connection the server is closing.
+ */
+const KEEP_ALIVE_TIMEOUT_MS = 65_000;
+
+/**
+ * Bounds how long a connection may occupy a socket without completing its request headers, which a
+ * trickling client would otherwise hold open indefinitely. The overall request timeout is left at
+ * the platform default: tool calls stream responses for as long as Tableau takes to answer, and a
+ * shorter bound here risks severing them.
+ */
+function applyServerTimeouts(server: http.Server | https.Server): void {
+  server.headersTimeout = HEADERS_TIMEOUT_MS;
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+}
 
 export async function startExpressServer({
   basePath,
@@ -63,7 +84,13 @@ export async function startExpressServer({
     }),
   );
 
-  const middleware: Array<RequestHandler> = [handlePingRequest];
+  const middleware: Array<RequestHandler> = [];
+  // First in the chain, ahead of the ping responder, so no anonymous request reaches MCP behavior.
+  if (config.staticAuthClients.length > 0) {
+    middleware.push(staticTokenAuthMiddleware());
+  }
+
+  middleware.push(handlePingRequest);
   if (config.enablePassthroughAuth) {
     middleware.push(passthroughAuthMiddleware());
   }
@@ -77,6 +104,11 @@ export async function startExpressServer({
     middleware.push(oauthProvider.authMiddleware);
   }
   middleware.push(latencyMiddleware());
+
+  // Outside the authenticated path so a platform health check needs no credential.
+  app.get('/health', (_req: Request, res: Response) => {
+    res.status(200).json({ status: 'ok' });
+  });
 
   const path = `/${basePath}`;
   app.post(path, ...middleware, createMcpServer);
@@ -94,11 +126,11 @@ export async function startExpressServer({
   const useSsl = !!(config.sslKey && config.sslCert);
   if (!useSsl) {
     return new Promise((resolve) => {
-      const server = http
-        .createServer(app)
-        .listen(config.httpPort, () =>
-          resolve({ url: `http://localhost:${config.httpPort}/${basePath}`, app, server }),
-        );
+      const server = http.createServer(app);
+      applyServerTimeouts(server);
+      server.listen(config.httpPort, () =>
+        resolve({ url: `http://localhost:${config.httpPort}/${basePath}`, app, server }),
+      );
     });
   }
 
@@ -116,11 +148,11 @@ export async function startExpressServer({
   };
 
   return new Promise((resolve) => {
-    const server = https
-      .createServer(options, app)
-      .listen(config.httpPort, () =>
-        resolve({ url: `https://localhost:${config.httpPort}/${basePath}`, app, server }),
-      );
+    const server = https.createServer(options, app);
+    applyServerTimeouts(server);
+    server.listen(config.httpPort, () =>
+      resolve({ url: `https://localhost:${config.httpPort}/${basePath}`, app, server }),
+    );
   });
 
   async function createMcpServer(req: AuthenticatedRequest, res: Response): Promise<void> {

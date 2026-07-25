@@ -778,8 +778,91 @@ describe('Config', () => {
       vi.stubEnv('OAUTH_ISSUER', undefined);
 
       expect(() => new Config()).toThrow(
-        'OAUTH_ISSUER must be set when TRANSPORT is "http" unless DANGEROUSLY_DISABLE_OAUTH is "true"',
+        'One of OAUTH_ISSUER or MCP_USERS must be set when TRANSPORT is "http" unless DANGEROUSLY_DISABLE_OAUTH is "true"',
       );
+    });
+
+    it('should not throw when TRANSPORT is "http" and only MCP_USERS is set', () => {
+      vi.stubEnv('TRANSPORT', 'http');
+      vi.stubEnv('OAUTH_ISSUER', undefined);
+      vi.stubEnv('MCP_USERS', 'reporting=s3cret');
+
+      const config = new Config();
+      expect(config.staticAuthClients).toEqual([{ name: 'reporting', token: 's3cret' }]);
+    });
+
+    it('should throw error when TRANSPORT is "http" and MCP_USERS yields no valid entry', () => {
+      vi.stubEnv('TRANSPORT', 'http');
+      vi.stubEnv('OAUTH_ISSUER', undefined);
+      vi.stubEnv('MCP_USERS', 'reporting=,=s3cret,garbage');
+
+      expect(() => new Config()).toThrow(
+        'MCP_USERS is set but contains no valid "name=token" entry',
+      );
+    });
+
+    it('should throw error when MCP_USERS assigns one token to several clients', () => {
+      vi.stubEnv('MCP_USERS', 'reporting=shared,analytics=shared');
+
+      expect(() => new Config()).toThrow(
+        'MCP_USERS assigns the same token to more than one client',
+      );
+    });
+
+    it('should throw error when OAUTH_ISSUER and MCP_USERS are both set', () => {
+      vi.stubEnv('TRANSPORT', 'http');
+      vi.stubEnv('OAUTH_ISSUER', 'https://issuer.example.com');
+      vi.stubEnv('MCP_USERS', 'reporting=s3cret');
+
+      expect(() => new Config()).toThrow(
+        'OAUTH_ISSUER and MCP_USERS are mutually exclusive; set exactly one',
+      );
+    });
+
+    it('should not throw when OAUTH_ISSUER accompanies MCP_USERS but OAuth is disabled', () => {
+      vi.stubEnv('TRANSPORT', 'http');
+      vi.stubEnv('OAUTH_ISSUER', 'https://issuer.example.com');
+      vi.stubEnv('MCP_USERS', 'reporting=s3cret');
+      vi.stubEnv('DANGEROUSLY_DISABLE_OAUTH', 'true');
+
+      const config = new Config();
+      expect(config.oauth.enabled).toBe(false);
+      expect(config.staticAuthClients).toEqual([{ name: 'reporting', token: 's3cret' }]);
+    });
+
+    it('should not throw when MCP_USERS is absent on the stdio transport', () => {
+      vi.stubEnv('TRANSPORT', 'stdio');
+      vi.stubEnv('MCP_USERS', undefined);
+
+      const config = new Config();
+      expect(config.staticAuthClients).toEqual([]);
+    });
+
+    it('should parse MCP_USERS entries, keeping "=" inside a token and trimming whitespace', () => {
+      vi.stubEnv('MCP_USERS', ' reporting = dG9rZW4= , analytics=second ');
+
+      const config = new Config();
+      expect(config.staticAuthClients).toEqual([
+        { name: 'reporting', token: 'dG9rZW4=' },
+        { name: 'analytics', token: 'second' },
+      ]);
+    });
+
+    it('should skip malformed MCP_USERS entries without discarding valid ones', () => {
+      vi.stubEnv('MCP_USERS', 'reporting=first,,noseparator,=orphan,trailing=,analytics=second');
+
+      const config = new Config();
+      expect(config.staticAuthClients).toEqual([
+        { name: 'reporting', token: 'first' },
+        { name: 'analytics', token: 'second' },
+      ]);
+    });
+
+    it('should treat a whitespace-only MCP_USERS as unconfigured', () => {
+      vi.stubEnv('MCP_USERS', '   ');
+
+      const config = new Config();
+      expect(config.staticAuthClients).toEqual([]);
     });
 
     it('should throw error when OAUTH_JWE_PRIVATE_KEY and OAUTH_JWE_PRIVATE_KEY_PATH is not set', () => {

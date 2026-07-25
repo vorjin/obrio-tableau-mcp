@@ -50,6 +50,46 @@ The quickest way to run Tableau MCP locally. Requires [Node.js](https://nodejs.o
 
 For Docker, building from source, and other self-hosted options, see the [Getting Started guide](https://tableau.github.io/tableau-mcp/docs/getting-started).
 
+## Authenticating MCP Clients over HTTP
+
+An HTTP transport must authenticate its callers; otherwise anyone who can reach the server can open a
+session and invoke every registered tool against the server's own Tableau credentials. Two mechanisms
+are available.
+
+**OAuth 2.1** — set `OAUTH_ISSUER` so each user signs in with their own Tableau identity and Tableau's
+per-user permissions are enforced. This is the right choice whenever the callers are people.
+
+**Pre-shared bearer tokens** — set `MCP_USERS` to a comma-separated list of `name=token` pairs. Each
+client sends its token as `Authorization: Bearer <token>`. The name carries no privileges; it labels
+the entry in configuration and is attached to the authenticated request for downstream handlers. This
+suits service-to-service callers, which have no user present to complete an interactive sign-in.
+
+```
+MCP_USERS=first-client=<token>,second-client=<other-token>
+```
+
+Generate tokens from a cryptographically secure random source and give every client its own, so one
+can be rotated without disturbing the others. A token may itself contain `=`, since each entry is
+split on its first `=` only, but it must not contain a comma, which separates entries. Assigning one
+token to two clients is rejected at startup, because the token is what identifies the caller.
+
+The credential must travel in the `Authorization` header. Passing it in the query string is not
+supported: the MCP specification prohibits it, and URLs are routinely retained in proxy and CDN access
+logs. A missing, malformed or unrecognised token is answered with `401` and a `WWW-Authenticate:
+Bearer` challenge, and the rejection is logged without the token.
+
+When `TRANSPORT` is `http`, the server refuses to start unless `OAUTH_ISSUER` or `MCP_USERS` is set,
+or authentication is explicitly waived with `DANGEROUSLY_DISABLE_OAUTH=true`. The two mechanisms are
+mutually exclusive and setting both is rejected at startup: they run as consecutive gates, so a
+combined configuration would require every caller to satisfy both.
+
+`GET /health` is served without a credential so platform health checks need no secret. Every other
+request is authenticated, including MCP `ping`.
+
+Consider also narrowing the surface a token can reach with `INCLUDE_TOOLS` or `EXCLUDE_TOOLS`. An
+unrecognised tool name in either list is discarded, and an empty resulting list applies no filtering
+at all, so confirm the deployed surface by calling `tools/list` rather than by reading the variable.
+
 ## Deploy to Heroku
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://www.heroku.com/deploy?template=https://github.com/tableau/tableau-mcp)

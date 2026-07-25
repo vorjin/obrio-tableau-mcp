@@ -51,6 +51,7 @@ export interface ProcessEnvWeb extends ProcessEnvBase {
   ALLOW_SITES_TO_CONFIGURE_REQUEST_OVERRIDES: string | undefined;
   ALLOWED_REQUEST_OVERRIDES: string | undefined;
   ENABLE_PASSTHROUGH_AUTH: string | undefined;
+  MCP_USERS: string | undefined;
   DANGEROUSLY_DISABLE_OAUTH: string | undefined;
   OAUTH_EMBEDDED_AUTHZ_SERVER: string | undefined;
   OAUTH_ISSUER: string | undefined;

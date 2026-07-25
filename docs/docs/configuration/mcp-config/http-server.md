@@ -14,7 +14,9 @@ OAuth as a security best practice for general multi-user deployments.
 
 Non-OAuth HTTP configurations are intended only for testing/prototyping or deployments that are
 licensed and approved for user-based licensing (UBL). Confirm this with your Tableau licensing and
-security guidance before opting out. To opt out, see the entry on
+security guidance before opting out. Service-to-service callers, which have no user present to
+complete an interactive sign-in, can still be authenticated without OAuth using pre-shared bearer
+tokens; see [`MCP_USERS`](#mcp_users). To disable authentication altogether, see the entry on
 [`DANGEROUSLY_DISABLE_OAUTH`](oauth.md#dangerously_disable_oauth).
 
 :::
@@ -44,6 +46,28 @@ same time will terminate any prior session and will result in an authentication 
 for more details.
 
 :::
+
+<hr />
+
+## `MCP_USERS`
+
+A comma-separated list of `name=token` pairs. Each client authenticates by sending its token as
+`Authorization: Bearer <token>`; the name labels the entry in configuration and carries no
+privileges. This authenticates service-to-service callers, which cannot complete an interactive
+sign-in.
+
+Each entry is split on its first `=` only, so a token may contain `=`, but a token must not contain
+a comma. Assigning one token to two clients is rejected at startup. `MCP_USERS` and
+[`OAUTH_ISSUER`](oauth.md) are mutually exclusive: they run as consecutive gates, so a combined
+configuration would require every caller to satisfy both.
+
+A missing, malformed or unrecognised token is answered with `401` and a `WWW-Authenticate: Bearer`
+challenge. The credential is read only from the `Authorization` header; the MCP specification
+prohibits passing it in the query string. `GET /health` is served without a credential; every other
+request is authenticated, including MCP `ping`.
+
+- Default: unset
+- Example: `MCP_USERS=reporting-service=<token>,etl-service=<other-token>`
 
 <hr />
 
