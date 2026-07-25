@@ -13,6 +13,7 @@ import {
 } from '../../telemetry/clientDisplayName.js';
 import { getTelemetryProvider } from '../../telemetry/init.js';
 import { getProductTelemetry } from '../../telemetry/productTelemetry/telemetryForwarder.js';
+import { extractToolErrorMessage } from '../../utils/extractToolErrorMessage.js';
 import { getExceptionMessage } from '../../utils/getExceptionMessage.js';
 import { getHttpStatus } from '../../utils/getHttpStatus.js';
 import { LogAndExecuteParams, Tool, ToolParams } from '../tool.js';
@@ -163,7 +164,7 @@ export class WebTool<Args extends ZodRawShape | undefined = undefined> extends T
 
     let success = false;
     let errorCode = ''; // HTTP status category: "4xx", "5xx", or empty for successful calls
-    let toolResult: CallToolResult;
+    let toolResult: CallToolResult | undefined;
 
     try {
       const result = await callback();
@@ -233,6 +234,10 @@ export class WebTool<Args extends ZodRawShape | undefined = undefined> extends T
         is_hyperforce: config.isHyperforce,
         success,
         error_code: errorCode,
+        // Only populated for genuine error results (isError: true). The ZodiosValidationError
+        // passthrough returns isError: false with the full API payload, so keying off isError
+        // (not !success) keeps successful response data out of telemetry.
+        error_message: toolResult?.isError ? extractToolErrorMessage(toolResult) : '',
         oauth_client_id: sanitizeClientIdForTelemetry(oauthClientId),
         oauth_client_display_name:
           getClientDisplayName(oauthClientId) ?? sanitizeClientIdForTelemetry(oauthClientId),
