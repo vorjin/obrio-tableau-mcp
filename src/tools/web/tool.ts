@@ -275,12 +275,12 @@ function getErrorResult(requestId: RequestId, error: unknown): CallToolResult {
     };
   }
 
-  // Tableau returns a structured `{ error: { summary, detail } }` body on most 4xx responses. Surface
-  // that reason instead of the generic axios `Request failed with status code N`, which is otherwise lost.
+  // Tableau's structured 4xx body carries the reason; the status stays in the message so a client can key retries on it.
   const tableauError = parseTableauApiError(error);
+  const reason = [tableauError?.summary, tableauError?.detail].filter(Boolean).join(': ');
   const message =
-    tableauError && (tableauError.summary || tableauError.detail)
-      ? [tableauError.summary, tableauError.detail].filter(Boolean).join(': ')
+    tableauError && reason
+      ? `Request failed with status code ${tableauError.status}: ${reason}`
       : getExceptionMessage(error);
 
   return {

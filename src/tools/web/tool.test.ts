@@ -155,7 +155,54 @@ describe('Tool', () => {
 
     expect(result.isError).toBe(true);
     invariant(result.content[0].type === 'text');
-    expect(result.content[0].text).toBe('requestId: 2, error: Bad Request: Invalid field name');
+    expect(result.content[0].text).toBe(
+      'requestId: 2, error: Request failed with status code 400: Bad Request: Invalid field name',
+    );
+  });
+
+  it.each([401, 429])(
+    'should keep the HTTP status in the message when Tableau returns a structured %i body',
+    async (status) => {
+      const tool = new WebTool(mockParams);
+      const callback = vi.fn().mockImplementation(async (_requestId: string) => {
+        throw {
+          isAxiosError: true,
+          response: {
+            status,
+            data: { error: { code: `${status}000`, summary: 'Denied', detail: 'No reason given' } },
+          },
+        };
+      });
+
+      const result = await tool.logAndExecute({
+        extra: mockExtra,
+        args: { param1: 'test' },
+        callback,
+        constrainSuccessResult: (result) => ({ type: 'success', result }),
+      });
+
+      invariant(result.content[0].type === 'text');
+      // A structured body must not hide the status: clients retry rate limits and auth races by status alone.
+      expect(result.content[0].text).toContain(`status code ${status}`);
+      expect(result.content[0].text).toContain('Denied: No reason given');
+    },
+  );
+
+  it('should not shadow the reason when the body carries no summary or detail', async () => {
+    const tool = new WebTool(mockParams);
+    const callback = vi.fn().mockImplementation(async (_requestId: string) => {
+      throw new AxiosError('Request failed with status code 503');
+    });
+
+    const result = await tool.logAndExecute({
+      extra: mockExtra,
+      args: { param1: 'test' },
+      callback,
+      constrainSuccessResult: (result) => ({ type: 'success', result }),
+    });
+
+    invariant(result.content[0].type === 'text');
+    expect(result.content[0].text).toBe('requestId: 2, error: Request failed with status code 503');
   });
 
   it('should constrain the success result', async () => {
